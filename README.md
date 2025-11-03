@@ -138,4 +138,3 @@ Contributions welcome! You can:
 - Share new themes  
 
 If you like Flint Launcher, give it a ⭐ on GitHub!  
-Happy launching! 🚀
