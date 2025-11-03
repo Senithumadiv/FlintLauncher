@@ -25,11 +25,12 @@ A fast, customizable application launcher written in Rust. Inspired by Rofi with
 # Clone the repository
 git clone https://github.com/Senithumadiv/FlintLauncher.git
 cd FlintLauncher
-
+```
 # Run the installer
+```bash
 chmod +x install.sh
 ./install.sh
-
+```
 ### Manual Installation
 ```bash
 git clone https://github.com/Senithumadiv/FlintLauncher.git
@@ -39,11 +40,13 @@ sudo cp target/release/flint_launcher /usr/local/bin/
 sudo chmod +x /usr/local/bin/flint_launcher
 mkdir -p ~/.config/flint
 ```
+
 ## 🎯 Usage
 ### Run from Terminal
 ```bash
 flint_launcher
 ```
+
 ## 🎨 Theming
 Flint supports full customization via:
 ```
