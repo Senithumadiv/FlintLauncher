@@ -38,15 +38,15 @@ cargo build --release
 sudo cp target/release/flint_launcher /usr/local/bin/
 sudo chmod +x /usr/local/bin/flint_launcher
 mkdir -p ~/.config/flint
-
+```
 ## 🎯 Usage
 ### Run from Terminal
 ```bash
 flint_launcher
-
+```
 ## 🎨 Theming
 Flint supports full customization via:
-
+```
 
 ### Default Theme (Tokyo Night)
 ```conf
@@ -58,7 +58,7 @@ border_color=#414868
 font_size=16
 font_family=System
 border_radius=0
-
+```
 ### Everblush Theme
 ```conf
 background=#141b1e
@@ -69,7 +69,7 @@ border_color=#2b3339
 font_size=16
 font_family=JetBrains Mono
 border_radius=6
-
+```
 ### Light Theme
 ```conf
 background=#ffffff
@@ -80,7 +80,7 @@ border_color=#d8dee9
 font_size=16
 font_family=System
 border_radius=6
-
+```
 ### Catppuccin Macchiato
 ```conf
 background=#24273a
@@ -91,19 +91,19 @@ border_color=#494d64
 font_size=16
 font_family=Fira Code
 border_radius=8
-
+```
 ### Custom Fonts
 ```conf
 font_family=ZedMono Nerd Font Mono
 font_family=Fira Code
 font_family=JetBrains Mono
-
+```
 ## 🛠️ Building from Source
 ```bash
 git clone https://github.com/Senithumadiv/FlintLauncher.git
 cd FlintLauncher
 cargo build --release
-
+```
 Binary:  
 `target/release/flint_launcher`
 
@@ -126,6 +126,7 @@ Binary:
 cd FlintLauncher
 chmod +x uninstall.sh
 ./uninstall.sh
+```
 
 ## 📝 License
 Licensed under the MIT License
