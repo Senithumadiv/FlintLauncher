@@ -26,7 +26,7 @@ A fast, customizable application launcher written in Rust. Inspired by Rofi with
 git clone https://github.com/Senithumadiv/FlintLauncher.git
 cd FlintLauncher
 ```
-# Run the installer
+### Run the installer
 ```bash
 chmod +x install.sh
 ./install.sh
