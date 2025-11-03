@@ -92,10 +92,16 @@ impl Theme {
     }
 }
 
+#[derive(Clone)]
+struct AppEntry {
+    name: String,      // Display name (e.g., "Albion Online")
+    desktop_id: String, // Desktop file ID (e.g., "sandbox-interactive_com-albiononline_1")
+}
+
 struct FlintApp {
     query: String,
-    results: Vec<String>,
-    items: Vec<String>,
+    results: Vec<AppEntry>,
+    items: Vec<AppEntry>,
     selected: usize,
     should_close: bool,
     has_focused: bool,
@@ -131,30 +137,38 @@ impl eframe::App for FlintApp {
             let total_width = 800.0;
             ui.set_width(total_width);
             
-            // Clean search area - no box, just text
+            // Bigger, centered search area
             ui.vertical_centered(|ui| {
-                ui.add_space(15.0);
+                ui.add_space(25.0); // More space at top
                 
                 let text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
                 
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Type to search...")
-                        .desired_width(total_width - 40.0)
-                        .text_color(egui::Color32::from_rgb(
-                            (text_rgb[0] * 255.0) as u8,
-                            (text_rgb[1] * 255.0) as u8,
-                            (text_rgb[2] * 255.0) as u8,
-                        ))
-                        .id(egui::Id::new("search_field")),
-                );
+                // Create a centered container for the search box
+                ui.horizontal(|ui| {
+                    ui.add_space(50.0); // Left padding
+                    
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.query)
+                            .hint_text("Type to search...")
+                            .desired_width(total_width - 100.0) // Wider text box
+                            .text_color(egui::Color32::from_rgb(
+                                (text_rgb[0] * 255.0) as u8,
+                                (text_rgb[1] * 255.0) as u8,
+                                (text_rgb[2] * 255.0) as u8,
+                            ))
+                            .font(egui::TextStyle::Heading) // Bigger font
+                            .id(egui::Id::new("search_field")),
+                    );
 
-                if !self.has_focused {
-                    ui.ctx().memory_mut(|mem| mem.request_focus(response.id));
-                    self.has_focused = true;
-                }
+                    if !self.has_focused {
+                        ui.ctx().memory_mut(|mem| mem.request_focus(response.id));
+                        self.has_focused = true;
+                    }
+                    
+                    ui.add_space(50.0); // Right padding
+                });
                 
-                ui.add_space(10.0);
+                ui.add_space(15.0); // Space below search box
             });
 
             // Handle keyboard input
@@ -176,7 +190,7 @@ impl eframe::App for FlintApp {
 
             if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.results.is_empty() {
                 if let Some(app) = self.results.get(self.selected) {
-                    launch_app(app);
+                    launch_app(&app.desktop_id);
                     self.should_close = true;
                 }
             }
@@ -186,17 +200,17 @@ impl eframe::App for FlintApp {
                 let matcher = SkimMatcherV2::default();
                 let query = self.query.clone();
                 
-                let mut scored_results: Vec<(i64, String)> = self
+                let mut scored_results: Vec<(i64, AppEntry)> = self
                     .items
                     .par_iter()
-                    .filter_map(|s| {
-                        matcher.fuzzy_match(s, &query)
-                            .map(|score| (score, s.clone()))
+                    .filter_map(|app| {
+                        matcher.fuzzy_match(&app.name, &query)
+                            .map(|score| (score, app.clone()))
                     })
                     .collect();
                 
                 scored_results.sort_by(|a, b| b.0.cmp(&a.0));
-                self.results = scored_results.into_iter().map(|(_, s)| s).collect();
+                self.results = scored_results.into_iter().map(|(_, app)| app).collect();
                 
                 if self.selected >= self.results.len() && !self.results.is_empty() {
                     self.selected = 0;
@@ -247,7 +261,7 @@ impl eframe::App for FlintApp {
                             };
                             
                             let button = egui::Button::new(
-                                egui::RichText::new(app)
+                                egui::RichText::new(&app.name)
                                     .color(text_color)
                                     .size(self.theme.font_size)
                             )
@@ -258,12 +272,8 @@ impl eframe::App for FlintApp {
                             let response = ui.add(button);
                             
                             if response.clicked() {
-                                launch_app(app);
+                                launch_app(&app.desktop_id);
                                 self.should_close = true;
-                            }
-                            
-                            if response.hovered() {
-                                self.selected = i;
                             }
                         }
                     });
@@ -283,46 +293,38 @@ impl eframe::App for FlintApp {
     }
 }
 
-fn load_system_font(ctx: &egui::Context, font_family: &str) -> bool {
-    if font_family == "System" {
-        return true;
-    }
-    
+fn launch_app(desktop_id: &str) {
+    let _ = Command::new("gtk-launch").arg(desktop_id).spawn();
+}
+
+fn scan_desktop_apps() -> Vec<AppEntry> {
+    let mut apps = Vec::new();
     let home = std::env::var("HOME").unwrap();
-    
-    // Create owned strings for font directories
-    let font_dirs = vec![
-        "/usr/share/fonts".to_string(),
-        "/usr/local/share/fonts".to_string(),
-        format!("{}/.local/share/fonts", home),
-        format!("{}/.fonts", home),
-    ];
-    
-    for font_dir in font_dirs {
-        if let Ok(entries) = fs::read_dir(&font_dir) {
+    let local_path = format!("{}/.local/share/applications", home);
+    let paths = vec!["/usr/share/applications", "/usr/local/share/applications", &local_path];
+
+    for path in paths {
+        if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(ext) = path.extension() {
-                    if ext == "ttf" || ext == "otf" {
-                        if let Some(file_name) = path.file_stem() {
-                            if file_name.to_string_lossy().to_lowercase().contains(&font_family.to_lowercase()) {
-                                if let Ok(font_data) = fs::read(&path) {
-                                    let mut fonts = egui::FontDefinitions::default();
-                                    fonts.font_data.insert(
-                                        font_family.to_string(),
-                                        egui::FontData::from_owned(font_data),
-                                    );
-                                    
-                                    // Replace the proportional font family
-                                    fonts
-                                        .families
-                                        .get_mut(&egui::FontFamily::Proportional)
-                                        .unwrap()
-                                        .insert(0, font_family.to_string());
-                                    
-                                    ctx.set_fonts(fonts);
-                                    return true;
-                                }
+                let path: PathBuf = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("desktop") {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        let mut name = None;
+                        
+                        for line in content.lines() {
+                            if line.starts_with("Name=") {
+                                name = Some(line["Name=".len()..].to_string());
+                                break;
+                            }
+                        }
+                        
+                        if let Some(app_name) = name {
+                            // Get the desktop file ID (filename without .desktop extension)
+                            if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                apps.push(AppEntry {
+                                    name: app_name,
+                                    desktop_id: file_stem.to_string(),
+                                });
                             }
                         }
                     }
@@ -330,8 +332,11 @@ fn load_system_font(ctx: &egui::Context, font_family: &str) -> bool {
             }
         }
     }
-    
-    false
+
+    // Sort by name for consistent ordering
+    apps.sort_by(|a, b| a.name.cmp(&b.name));
+    apps.dedup_by(|a, b| a.name == b.name);
+    apps
 }
 
 fn apply_theme(ctx: &egui::Context, theme: &Theme) {
@@ -380,11 +385,6 @@ selection_text=#ffffff
 border_color=#3c3c3c
 
 # Font settings
-# Use "System" for default font, or any installed font name like:
-# - "ZedMono Nerd Font Mono" 
-# - "Fira Code"
-# - "JetBrains Mono"
-# - "Cascadia Code"
 font_size=16
 font_family=System
 
@@ -396,39 +396,6 @@ border_radius=0
         let _ = fs::create_dir_all(parent);
     }
     let _ = fs::write(theme_path, default_theme);
-}
-
-fn launch_app(name: &str) {
-    let _ = Command::new("gtk-launch").arg(name).spawn();
-}
-
-fn scan_desktop_apps() -> Vec<String> {
-    let mut apps = Vec::new();
-    let home = std::env::var("HOME").unwrap();
-    let local_path = format!("{}/.local/share/applications", home);
-    let paths = vec!["/usr/share/applications", "/usr/local/share/applications", &local_path];
-
-    for path in paths {
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                let path: PathBuf = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("desktop") {
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        for line in content.lines() {
-                            if line.starts_with("Name=") {
-                                apps.push(line["Name=".len()..].to_string());
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    apps.sort();
-    apps.dedup();
-    apps
 }
 
 fn main() -> eframe::Result<()> {
@@ -444,14 +411,8 @@ fn main() -> eframe::Result<()> {
         "Flint",
         options,
         Box::new(|cc| {
-            // Load custom font at startup if specified in config
-            let app = FlintApp::default();
-            if app.theme.font_family != "System" {
-                load_system_font(&cc.egui_ctx, &app.theme.font_family);
-            }
-            
             cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            Box::new(app)
+            Box::new(FlintApp::default())
         }),
     )
 }
