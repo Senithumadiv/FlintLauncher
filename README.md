@@ -1,9 +1,10 @@
 # Flint Launcher ⚡
 
-A fast, customizable application launcher written in Rust for Linux. Inspired by Rofi with Tokyo Night theming out of the box.
+A fast, customizable application launcher written in Rust for Linux with theming support.
 
 ![Flint Launcher](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+ ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 ## ✨ Features
 
