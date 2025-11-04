@@ -22,8 +22,9 @@ A fast, customizable application launcher written in Rust for Linux with theming
 - GTK (for app launching)
 
 ### Quick Install
-```bash
+
 # Clone the repository
+```bash
 git clone https://github.com/Senithumadiv/FlintLauncher.git
 cd FlintLauncher
 ```
@@ -52,17 +53,6 @@ flint_launcher
 Flint supports full customization via:
 ```
 
-### Default Theme (Tokyo Night)
-```conf
-background=#1a1b26
-text_color=#c0caf5
-selection_bg=#7aa2f7
-selection_text=#1a1b26
-border_color=#414868
-font_size=16
-font_family=System
-border_radius=0
-```
 ### Everblush Theme
 ```conf
 background=#141b1e
