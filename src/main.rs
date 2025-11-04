@@ -94,8 +94,8 @@ impl Theme {
 
 #[derive(Clone)]
 struct AppEntry {
-    name: String,      // Display name (e.g., "Albion Online")
-    desktop_id: String, // Desktop file ID (e.g., "sandbox-interactive_com-albiononline_1")
+    name: String,
+    desktop_id: String,
 }
 
 struct FlintApp {
@@ -128,48 +128,64 @@ impl eframe::App for FlintApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         apply_theme(ctx, &self.theme);
         
+        // Close if clicked outside the window
+        ctx.input(|i| {
+            if i.pointer.any_click() {
+                if let Some(pos) = i.pointer.interact_pos() {
+                    let rect = ctx.screen_rect();
+                    if !rect.contains(pos) {
+                        self.should_close = true;
+                    }
+                }
+            }
+            
+            // Also close if window loses focus (clicked on another app/desktop)
+            if let Some(focused) = i.viewport().focused {
+                if !focused && i.pointer.any_click() {
+                    self.should_close = true;
+                }
+            }
+        });
+        
         if self.should_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let total_width = 800.0;
-            ui.set_width(total_width);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().inner_margin(egui::Margin::same(0.0)))
+            .show(ctx, |ui| {
+            let total_width = ui.available_width();
             
-            // Bigger, centered search area
-            ui.vertical_centered(|ui| {
-                ui.add_space(25.0); // More space at top
+            ui.add_space(25.0);
+            
+            let text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
+            
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
                 
-                let text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
-                
-                // Create a centered container for the search box
-                ui.horizontal(|ui| {
-                    ui.add_space(50.0); // Left padding
-                    
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.query)
-                            .hint_text("Type to search...")
-                            .desired_width(total_width - 100.0) // Wider text box
-                            .text_color(egui::Color32::from_rgb(
-                                (text_rgb[0] * 255.0) as u8,
-                                (text_rgb[1] * 255.0) as u8,
-                                (text_rgb[2] * 255.0) as u8,
-                            ))
-                            .font(egui::TextStyle::Heading) // Bigger font
-                            .id(egui::Id::new("search_field")),
-                    );
+                let response = ui.add_sized(
+                    [total_width - 40.0, 40.0],
+                    egui::TextEdit::singleline(&mut self.query)
+                        .hint_text("Type to search...")
+                        .text_color(egui::Color32::from_rgb(
+                            (text_rgb[0] * 255.0) as u8,
+                            (text_rgb[1] * 255.0) as u8,
+                            (text_rgb[2] * 255.0) as u8,
+                        ))
+                        .font(egui::TextStyle::Heading)
+                        .id(egui::Id::new("search_field"))
+                );
 
-                    if !self.has_focused {
-                        ui.ctx().memory_mut(|mem| mem.request_focus(response.id));
-                        self.has_focused = true;
-                    }
-                    
-                    ui.add_space(50.0); // Right padding
-                });
+                if !self.has_focused {
+                    ui.ctx().memory_mut(|mem| mem.request_focus(response.id));
+                    self.has_focused = true;
+                }
                 
-                ui.add_space(15.0); // Space below search box
+                ui.add_space(20.0);
             });
+            
+            ui.add_space(15.0);
 
             // Handle keyboard input
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -226,6 +242,7 @@ impl eframe::App for FlintApp {
             if !self.results.is_empty() {
                 egui::ScrollArea::vertical()
                     .max_height(400.0)
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| {
                         ui.set_width(total_width);
                         
@@ -260,21 +277,32 @@ impl eframe::App for FlintApp {
                                 )
                             };
                             
-                            let button = egui::Button::new(
-                                egui::RichText::new(&app.name)
-                                    .color(text_color)
-                                    .size(self.theme.font_size)
-                            )
-                            .min_size(egui::vec2(total_width, 36.0))
-                            .fill(bg_color)
-                            .rounding(self.theme.border_radius);
-                            
-                            let response = ui.add(button);
-                            
-                            if response.clicked() {
-                                launch_app(&app.desktop_id);
-                                self.should_close = true;
-                            }
+                            ui.horizontal(|ui| {
+                                ui.add_space(10.0);
+                                
+                                let button = egui::Button::new(
+                                    egui::RichText::new(&app.name)
+                                        .color(text_color)
+                                        .size(self.theme.font_size)
+                                )
+                                .min_size(egui::vec2(total_width - 20.0, 36.0))
+                                .fill(bg_color)
+                                .rounding(self.theme.border_radius);
+                                
+                                let response = ui.add(button);
+                                
+                                // Scroll to selected item
+                                if is_selected {
+                                    response.scroll_to_me(Some(egui::Align::Center));
+                                }
+                                
+                                if response.clicked() {
+                                    launch_app(&app.desktop_id);
+                                    self.should_close = true;
+                                }
+                                
+                                ui.add_space(10.0);
+                            });
                         }
                     });
             } else if !self.query.is_empty() {
@@ -319,7 +347,6 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                         }
                         
                         if let Some(app_name) = name {
-                            // Get the desktop file ID (filename without .desktop extension)
                             if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
                                 apps.push(AppEntry {
                                     name: app_name,
@@ -333,7 +360,6 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
         }
     }
 
-    // Sort by name for consistent ordering
     apps.sort_by(|a, b| a.name.cmp(&b.name));
     apps.dedup_by(|a, b| a.name == b.name);
     apps
@@ -403,7 +429,11 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 500.0])
             .with_decorations(false)
-            .with_always_on_top(),
+            .with_always_on_top()
+            .with_resizable(false)
+            .with_window_level(egui::WindowLevel::AlwaysOnTop)
+            .with_taskbar(false),
+        centered: true,
         ..Default::default()
     };
 
