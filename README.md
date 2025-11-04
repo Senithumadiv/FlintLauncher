@@ -65,9 +65,9 @@ To use a custom font, place your `.ttf` or `.otf` file in one of these folders:
 
 Then set the font in the config using the **file name** (without the extension).  
 For example, if your file is:
-```conf
+
 ~/.local/share/fonts/JetBrainsMonoNerdFont-Regular.ttf
-```
+
 Use:
 ```bash
 "font_family=JetBrainsMonoNerdFont-Regular"
