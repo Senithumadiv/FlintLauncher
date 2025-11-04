@@ -52,6 +52,33 @@ flint_launcher
 ## 🎨 Theming
 Flint supports full customization via:
 
+### Font Setup
+
+This app uses the **font file name**, not the internal font name.
+
+To use a custom font, place your `.ttf` or `.otf` file in one of these folders:
+```conf
+~/.fonts
+~/.local/share/fonts
+/usr/share/fonts
+```
+
+Then set the font in the config using the **file name** (without the extension).  
+For example, if your file is:
+```conf
+~/.local/share/fonts/JetBrainsMonoNerdFont-Regular.ttf
+```
+Use:
+```bash
+"font_family=JetBrainsMonoNerdFont-Regular"
+```
+
+If the app still says “Font not found”, make sure the file is readable and rebuild the font cache:
+
+```conf
+fc-cache -fv
+```
+
 ### Everblush Theme
 ```conf
 background=#141b1e

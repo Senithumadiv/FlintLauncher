@@ -392,6 +392,41 @@ fn apply_theme(ctx: &egui::Context, theme: &Theme) {
     visuals.window_stroke.width = 1.0;
     
     ctx.set_visuals(visuals);
+    if theme.font_family != "System" {
+     let home = std::env::var("HOME").unwrap();
+     let possible_files = [
+        format!("{}/.fonts/{}.ttf", home, theme.font_family),
+        format!("{}/.fonts/{}.otf", home, theme.font_family),
+        format!("{}/.local/share/fonts/{}.ttf", home, theme.font_family),
+        format!("{}/.local/share/fonts/{}.otf", home, theme.font_family),
+        format!("/usr/share/fonts/truetype/{}.ttf", theme.font_family),
+        format!("/usr/share/fonts/opentype/{}.otf", theme.font_family),
+        format!("/usr/local/share/fonts/{}.ttf", theme.font_family),
+        format!("/usr/local/share/fonts/{}.otf", theme.font_family),
+        format!("/usr/share/fonts/{}.ttf", theme.font_family),
+        format!("/usr/share/fonts/{}.otf", theme.font_family),
+    ];
+
+    let mut found = false;
+    for path in &possible_files {
+        if std::path::Path::new(path).exists() {
+            if let Ok(font_data) = std::fs::read(path) {
+                let mut fonts = egui::FontDefinitions::default();
+                fonts.font_data.insert(theme.font_family.clone(), egui::FontData::from_owned(font_data));
+                fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, theme.font_family.clone());
+                fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, theme.font_family.clone());
+                ctx.set_fonts(fonts);
+                println!("Loaded font: {}", path);
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if !found {
+        println!("Font not found in any common directory!");
+    }
+}
 }
 
 fn get_config_dir() -> PathBuf {
