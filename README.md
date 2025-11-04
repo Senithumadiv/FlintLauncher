@@ -51,7 +51,6 @@ flint_launcher
 
 ## 🎨 Theming
 Flint supports full customization via:
-```
 
 ### Everblush Theme
 ```conf
