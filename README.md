@@ -55,6 +55,9 @@ flint_launcher
 
 ## 🎨 Theming
 Flint supports full customization via:
+```conf
+~/.config/flint/theme.conf
+```
 
 ### Font Setup
 
