@@ -23,6 +23,8 @@ A fast, customizable application launcher written in Rust for Linux with theming
 - **Web Search** – Search DuckDuckGo with `@` prefix
 - **Smooth Animations** – Beautiful fade-in and drop-down animations
 - **Parallel Search** – Uses Rayon for smooth, non-blocking filtering
+- **Instant Search**: Start typing after `:` to see matching emojis
+- **Currency Exchange** Convert between 160+ currencies with live exchange rates.
 
 ## 🚀 Installation
 

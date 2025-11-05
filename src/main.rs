@@ -2,6 +2,8 @@ use eframe::egui;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use rayon::prelude::*;
+use reqwest;
+use serde::Deserialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -103,7 +105,10 @@ enum ResultType {
     Calculator(String),
     Command(String),
     WebSearch(String),
-    Url(String),  // Add URL variant
+    Url(String),
+    File(PathBuf),
+    Emoji(String, String),
+    Currency(String, String, f64),
 }
 
 #[derive(Clone)]
@@ -193,12 +198,15 @@ struct FlintApp {
     _lock_file: File,
     window_animation: AnimationState,
     result_animations: Vec<AnimationState>,
+    runtime: tokio::runtime::Runtime,
 }
 
 impl FlintApp {
     fn new() -> Result<Self, String> {
         let lock_file = acquire_lock()?;
         let items = scan_desktop_apps();
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| format!("Failed to create async runtime: {}", e))?;
         
         Ok(Self {
             query: String::new(),
@@ -211,6 +219,7 @@ impl FlintApp {
             _lock_file: lock_file,
             window_animation: AnimationState::new(Duration::from_millis(300), AnimationType::FadeIn),
             result_animations: Vec::new(),
+            runtime,
         })
     }
     
@@ -451,6 +460,18 @@ impl eframe::App for FlintApp {
                                 open_url(&url);
                                 self.should_close = true;
                             }
+                            ResultType::File(path) => {
+                                open_file(&path);
+                                self.should_close = true;
+                            }
+                            ResultType::Emoji(_, emoji) => {
+                                copy_to_clipboard(&emoji);
+                                self.should_close = true;
+                            }
+                            ResultType::Currency(_, _, result) => {
+                                copy_to_clipboard(&result.to_string());
+                                self.should_close = true;
+                            }
                         }
                     }
                 }
@@ -459,14 +480,38 @@ impl eframe::App for FlintApp {
                 self.results.clear();
                 
                 if !self.query.is_empty() {
-                    // URL detection - check this FIRST
-                    if looks_like_url(&self.query) {
+                    // Emoji search (starts with :)
+                    if self.query.starts_with(':') {
+                        let emoji_query = &self.query[1..].trim();
+                        if !emoji_query.is_empty() {
+                            let emoji_results = search_emojis(emoji_query);
+                            for (name, emoji) in emoji_results {
+                                self.results.push(ResultType::Emoji(name, emoji));
+                            }
+                        }
+                    }
+                    // Currency conversion - try online first
+                    else if let Some((from, to, result)) = self.runtime.block_on(convert_currency_online(&self.query)) {
+                        self.results.push(ResultType::Currency(from, to, result));
+                    }
+                    // URL detection
+                    else if looks_like_url(&self.query) {
                         let url = if self.query.contains("://") {
                             self.query.clone()
                         } else {
                             format!("https://{}", self.query)
                         };
                         self.results.push(ResultType::Url(url));
+                    }
+                    // File search (when no prefix)
+                    else if !self.query.starts_with('=') && 
+                            !self.query.starts_with('$') && 
+                            !self.query.starts_with('@') &&
+                            self.query.len() >= 2 {
+                        let file_results = search_files(&self.query);
+                        for path in file_results {
+                            self.results.push(ResultType::File(path));
+                        }
                     }
                     // Calculator mode
                     else if self.query.starts_with('=') {
@@ -494,8 +539,9 @@ impl eframe::App for FlintApp {
                             self.results.push(ResultType::WebSearch(search.to_string()));
                         }
                     }
-                    // Normal app search
-                    else {
+                    
+                    // Normal app search (only if no other results found)
+                    if self.results.is_empty() {
                         let matcher = SkimMatcherV2::default();
                         let query = self.query.clone();
                         
@@ -631,6 +677,46 @@ impl eframe::App for FlintApp {
                                                         .size(self.theme.font_size)
                                                 );
                                             }
+                                            ResultType::File(path) => {
+                                                let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown");
+                                                ui.label(
+                                                    egui::RichText::new(format!("📄 {}", file_name))
+                                                        .color(egui::Color32::from_rgba_premultiplied(
+                                                            (color[0] * 255.0 * item_alpha) as u8,
+                                                            (color[1] * 255.0 * item_alpha) as u8,
+                                                            (color[2] * 255.0 * item_alpha) as u8,
+                                                            (item_alpha * 255.0) as u8,
+                                                        ))
+                                                        .size(self.theme.font_size)
+                                                );
+                                            }
+                                            ResultType::Emoji(name, emoji) => {
+                                                let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                ui.label(
+                                                    egui::RichText::new(format!("{} :{}", emoji, name))
+                                                        .color(egui::Color32::from_rgba_premultiplied(
+                                                            (color[0] * 255.0 * item_alpha) as u8,
+                                                            (color[1] * 255.0 * item_alpha) as u8,
+                                                            (color[2] * 255.0 * item_alpha) as u8,
+                                                            (item_alpha * 255.0) as u8,
+                                                        ))
+                                                        .size(self.theme.font_size)
+                                                );
+                                            }
+                                            ResultType::Currency(from, to, result) => {
+                                                let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                ui.label(
+                                                    egui::RichText::new(format!("💱 {} {} = {:.2} {} (Live)", self.query, from, result, to))
+                                                        .color(egui::Color32::from_rgba_premultiplied(
+                                                            (color[0] * 255.0 * item_alpha) as u8,
+                                                            (color[1] * 255.0 * item_alpha) as u8,
+                                                            (color[2] * 255.0 * item_alpha) as u8,
+                                                            (item_alpha * 255.0) as u8,
+                                                        ))
+                                                        .size(self.theme.font_size)
+                                                );
+                                            }
                                         }
                                     });
                                 }).response;
@@ -660,6 +746,18 @@ impl eframe::App for FlintApp {
                                         }
                                         ResultType::Url(url) => {
                                             open_url(&url);
+                                            self.should_close = true;
+                                        }
+                                        ResultType::File(path) => {
+                                            open_file(&path);
+                                            self.should_close = true;
+                                        }
+                                        ResultType::Emoji(_, emoji) => {
+                                            copy_to_clipboard(&emoji);
+                                            self.should_close = true;
+                                        }
+                                        ResultType::Currency(_, _, result) => {
+                                            copy_to_clipboard(&result.to_string());
                                             self.should_close = true;
                                         }
                                     }
@@ -725,6 +823,135 @@ fn render_highlighted_text(
     });
 }
 
+#[derive(Debug, Deserialize)]
+struct ExchangeRatesResponse {
+    rates: std::collections::HashMap<String, f64>,
+}
+
+// Currency code mapping for case-insensitive support
+fn normalize_currency_code(code: &str) -> Option<String> {
+    let code_lower = code.to_lowercase();
+    let result = match code_lower.as_str() {
+        // Major currencies
+        "usd" | "dollar" | "dollars" => "USD",
+        "eur" | "euro" | "euros" => "EUR", 
+        "gbp" | "pound" | "pounds" | "sterling" => "GBP",
+        "jpy" | "yen" => "JPY",
+        "cad" | "canadian dollar" => "CAD",
+        "aud" | "australian dollar" => "AUD",
+        "chf" | "swiss franc" => "CHF",
+        "cny" | "yuan" | "renminbi" => "CNY",
+        "inr" | "rupee" | "rupees" => "INR",
+        "lkr" | "sri lankan rupee" | "sri lankan rupees" => "LKR",
+        "brl" | "real" | "reais" => "BRL",
+        "rub" | "ruble" | "rubles" => "RUB",
+        "krw" | "won" => "KRW",
+        "mxn" | "mexican peso" => "MXN",
+        "sgd" | "singapore dollar" => "SGD",
+        "hkd" | "hong kong dollar" => "HKD",
+        "nzd" | "new zealand dollar" => "NZD",
+        "sek" | "swedish krona" => "SEK",
+        "nok" | "norwegian krone" => "NOK",
+        "dkk" | "danish krone" => "DKK",
+        "zar" | "rand" => "ZAR",
+        "try" | "turkish lira" => "TRY",
+        "pln" | "zloty" => "PLN",
+        "thb" | "baht" => "THB",
+        "idr" | "indonesian rupiah" => "IDR",
+        "huf" | "forint" => "HUF",
+        "czk" | "czech koruna" => "CZK",
+        "ils" | "shekel" => "ILS",
+        "clp" | "chilean peso" => "CLP",
+        "php" | "philippine peso" => "PHP",
+        "aed" | "uae dirham" => "AED",
+        "cop" | "colombian peso" => "COP",
+        "sar" | "saudi riyal" => "SAR",
+        "myr" | "malaysian ringgit" => "MYR",
+        "ron" | "romanian leu" => "RON",
+        // Crypto currencies
+        "btc" | "bitcoin" => "BTC",
+        "eth" | "ethereum" => "ETH",
+        // Fallback - if it's a 3-letter code, use it as-is in uppercase
+        _ if code.len() == 3 => {
+            return Some(code.to_uppercase());
+        }
+        _ => return None,
+    };
+    Some(result.to_string())
+}
+
+async fn convert_currency_online(query: &str) -> Option<(String, String, f64)> {
+    let parts: Vec<&str> = query.split_whitespace().collect();
+    
+    if parts.len() >= 3 {
+        let mut amount_str = parts[0];
+        let mut from_currency_str = parts[1];
+        let mut to_currency_str = parts.get(2).copied().unwrap_or("");
+        
+        // Handle "convert" prefix
+        if parts[0].to_lowercase() == "convert" && parts.len() >= 4 {
+            amount_str = parts[1];
+            from_currency_str = parts[2];
+            to_currency_str = parts.get(3).copied().unwrap_or("");
+        }
+        
+        // Handle "to" separator
+        if parts.len() >= 4 && parts[2].to_lowercase() == "to" {
+            to_currency_str = parts[3];
+        } else if parts.len() >= 4 && parts[0].to_lowercase() == "convert" && parts[3].to_lowercase() == "to" {
+            to_currency_str = parts.get(4).copied().unwrap_or("");
+        }
+        
+        if to_currency_str.is_empty() {
+            return None;
+        }
+        
+        if let (Ok(amount), Some(from_currency), Some(to_currency)) = (
+            amount_str.parse::<f64>(),
+            normalize_currency_code(from_currency_str),
+            normalize_currency_code(to_currency_str),
+        ) {
+            // Skip if currencies are the same
+            if from_currency == to_currency {
+                return Some((from_currency.to_string(), to_currency.to_string(), amount));
+            }
+            
+            // Use ExchangeRate-API which supports LKR and many other currencies
+            let client = reqwest::Client::new();
+            let url = format!("https://api.exchangerate-api.com/v4/latest/{}", from_currency);
+            
+            match client.get(&url).send().await {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        if let Ok(exchange_data) = response.json::<ExchangeRatesResponse>().await {
+                            if let Some(rate) = exchange_data.rates.get(&to_currency) {
+                                let converted = amount * rate;
+                                return Some((from_currency.to_string(), to_currency.to_string(), converted));
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Fallback to Frankfurter API if ExchangeRate-API fails
+                    let fallback_url = format!("https://api.frankfurter.app/latest?from={}", from_currency);
+                    if let Ok(fallback_response) = client.get(&fallback_url).send().await {
+                        if fallback_response.status().is_success() {
+                            if let Ok(exchange_data) = fallback_response.json::<ExchangeRatesResponse>().await {
+                                if let Some(rate) = exchange_data.rates.get(&to_currency) {
+                                    let converted = amount * rate;
+                                    return Some((from_currency.to_string(), to_currency.to_string(), converted));
+                                }
+                            }
+                        }
+                    }
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 fn copy_to_clipboard(text: &str) {
     let _ = Command::new("xclip")
         .args(["-selection", "clipboard"])
@@ -758,6 +985,115 @@ fn open_url(url: &str) {
         .spawn();
 }
 
+fn open_file(path: &PathBuf) {
+    let _ = Command::new("xdg-open")
+        .arg(path)
+        .spawn();
+}
+
+fn search_files(query: &str) -> Vec<PathBuf> {
+    let home = std::env::var("HOME").unwrap();
+    let search_dirs = [
+        format!("{}/Downloads", home),
+        format!("{}/Documents", home),
+        format!("{}/Desktop", home),
+        format!("{}/Pictures", home),
+        format!("{}/Music", home),
+        format!("{}/Videos", home),
+    ];
+    
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase();
+    
+    for dir in &search_dirs {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if file_name.to_lowercase().contains(&query_lower) {
+                        results.push(path);
+                        if results.len() >= 5 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    results.sort_by(|a, b| {
+        let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        a_name.len().cmp(&b_name.len())
+    });
+    
+    results.into_iter().take(8).collect()
+}
+
+fn search_emojis(query: &str) -> Vec<(String, String)> {
+    let emojis = [
+        ("smile", "😊"),
+        ("laugh", "😂"),
+        ("heart", "❤️"),
+        ("fire", "🔥"),
+        ("star", "⭐"),
+        ("thumbsup", "👍"),
+        ("ok", "👌"),
+        ("clap", "👏"),
+        ("pray", "🙏"),
+        ("eyes", "👀"),
+        ("cool", "😎"),
+        ("wink", "😉"),
+        ("kiss", "😘"),
+        ("tongue", "😛"),
+        ("sunglasses", "😎"),
+        ("thinking", "🤔"),
+        ("rocket", "🚀"),
+        ("computer", "💻"),
+        ("book", "📖"),
+        ("muscle", "💪"),
+        ("100", "💯"),
+        ("warning", "⚠️"),
+        ("check", "✅"),
+        ("cross", "❌"),
+        ("question", "❓"),
+        ("exclamation", "❗"),
+        ("rust", "🦀"),
+        ("python", "🐍"),
+        ("java", "☕"),
+        ("javascript", "🟨"),
+        ("github", "🐙"),
+        ("linux", "🐧"),
+        ("apple", "🍎"),
+        ("windows", "🪟"),
+        ("android", "🤖"),
+        ("money", "💰"),
+        ("clock", "⏰"),
+        ("calendar", "📅"),
+        ("email", "📧"),
+        ("phone", "📱"),
+        ("camera", "📷"),
+        ("music", "🎵"),
+        ("video", "🎬"),
+        ("game", "🎮"),
+        ("food", "🍕"),
+        ("coffee", "☕"),
+        ("beer", "🍺"),
+        ("car", "🚗"),
+        ("plane", "✈️"),
+        ("train", "🚆"),
+        ("bike", "🚲"),
+        ("boat", "⛵"),
+    ];
+    
+    let query_lower = query.to_lowercase();
+    emojis.iter()
+        .filter(|(name, _)| name.contains(&query_lower))
+        .map(|(name, emoji)| (name.to_string(), emoji.to_string()))
+        .take(5)
+        .collect()
+}
+
 fn looks_like_url(text: &str) -> bool {
     let text = text.trim();
     
@@ -770,7 +1106,6 @@ fn looks_like_url(text: &str) -> bool {
     // Domain-like patterns with optional paths
     if text.contains('.') && !text.contains(' ') {
         let domain_part = if text.contains('/') {
-            // Extract domain part before the first slash
             text.split('/').next().unwrap_or("")
         } else {
             text
@@ -780,58 +1115,25 @@ fn looks_like_url(text: &str) -> bool {
         if parts.len() >= 2 {
             let last_part = parts.last().unwrap();
             
-            // Comprehensive list of common TLDs
             let common_tlds = [
-                // Generic TLDs
                 "com", "org", "net", "info", "biz", "name", "pro",
-                // Country code TLDs
                 "io", "co", "me", "tv", "ai", "dev", "app", "tech", "xyz", "store",
                 "online", "site", "website", "space", "club", "fun", "live", "work",
                 "cloud", "digital", "media", "news", "blog", "shop", "art", "design",
                 "world", "global", "link", "click", "lol", "top", "win", "bid",
-                // Traditional country codes
                 "us", "uk", "ca", "au", "de", "fr", "jp", "cn", "in", "br", "ru",
                 "it", "es", "nl", "se", "no", "dk", "fi", "pl", "ch", "at", "be",
                 "ie", "nz", "sg", "hk", "kr", "tw", "mx", "za", "tr", "gr", "pt",
-                // More country codes
                 "eu", "asia", "africa", "lat", "berlin", "london", "nyc", "tokyo",
-                // Newer TLDs
                 "guru", "expert", "services", "solutions", "systems", "technology",
                 "network", "group", "company", "center", "support", "community",
                 "agency", "studio", "exchange", "foundation", "institute", "management",
                 "partners", "ventures", "capital", "enterprises", "holdings", "international",
-                "market", "tools", "equipment", "supplies", "gallery", "academy",
-                "education", "school", "university", "institute", "training", "careers",
-                "jobs", "recruitment", "health", "medical", "clinic", "hospital",
-                "pharmacy", "dental", "fit", "fitness", "yoga", "travel", "tours",
-                "vacations", "holiday", "hotel", "restaurant", "cafe", "bar", "pub",
-                "food", "pizza", "sushi", "fashion", "shoes", "clothing", "jewelry",
-                "beauty", "hair", "skin", "spa", "salon", "auto", "cars", "bike",
-                "boats", "cycles", "motorcycles", "realestate", "properties", "rentals",
-                "apartments", "villas", "condos", "construction", "contractors",
-                "builders", "engineering", "architecture", "design", "photography",
-                "photos", "pictures", "graphics", "art", "music", "film", "movies",
-                "theater", "tickets", "events", "shows", "entertainment", "games",
-                "gaming", "casino", "poker", "bet", "bingo", "lottery", "sports",
-                "football", "soccer", "basketball", "baseball", "hockey", "tennis",
-                "golf", "fishing", "hunting", "outdoors", "adventure", "camping",
-                "hiking", "biking", "running", "swimming", "yoga", "fitness",
-                "finance", "bank", "insurance", "investments", "loans", "credit",
-                "money", "capital", "wealth", "trading", "forex", "crypto",
-                "bitcoin", "ethereum", "blockchain", "nft", "metaverse",
-                "energy", "green", "eco", "solar", "wind", "water", "renewable",
-                "organic", "natural", "sustainable", "recycle", "environment",
-                "charity", "foundation", "ngo", "nonprofit", "volunteer",
-                "government", "gov", "mil", "edu", "ac", "govt", "parliament",
-                "law", "legal", "attorney", "lawyer", "justice", "court",
-                "security", "safety", "protection", "defense", "army", "navy",
-                "airforce", "police", "fire", "rescue", "emergency",
             ];
             
-            // Check if the domain part matches any common TLD
             return common_tlds.iter().any(|&tld| *last_part == tld) || 
-                   last_part.len() == 2 || // Any 2-letter country code
-                   last_part.starts_with("xn--"); // Internationalized domain names
+                   last_part.len() == 2 ||
+                   last_part.starts_with("xn--");
         }
     }
     
