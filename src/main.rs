@@ -2,7 +2,8 @@ use eframe::egui;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use rayon::prelude::*;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -15,19 +16,21 @@ struct Theme {
     font_size: f32,
     border_radius: f32,
     font_family: String,
+    highlight_color: String,
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            background: "#1e1e1e".to_string(),
-            text_color: "#d4d4d4".to_string(),
-            selection_bg: "#0078d4".to_string(),
+            background: "#ffffff".to_string(),
+            text_color: "#333333".to_string(),
+            selection_bg: "#007aff".to_string(),
             selection_text: "#ffffff".to_string(),
-            border_color: "#3c3c3c".to_string(),
-            font_size: 16.0,
+            border_color: "#e0e0e0".to_string(),
+            font_size: 18.0,
             border_radius: 0.0,
             font_family: "System".to_string(),
+            highlight_color: "#007aff".to_string(),
         }
     }
 }
@@ -57,6 +60,7 @@ impl Theme {
                         "selection_bg" => theme.selection_bg = value.to_string(),
                         "selection_text" => theme.selection_text = value.to_string(),
                         "border_color" => theme.border_color = value.to_string(),
+                        "highlight_color" => theme.highlight_color = value.to_string(),
                         "font_size" => {
                             if let Ok(size) = value.parse() {
                                 theme.font_size = size;
@@ -93,40 +97,58 @@ impl Theme {
 }
 
 #[derive(Clone)]
+enum ResultType {
+    App(AppEntry),
+    Calculator(String),
+    Command(String),
+    WebSearch(String),
+}
+
+#[derive(Clone)]
 struct AppEntry {
     name: String,
     desktop_id: String,
+    match_indices: Vec<usize>,
 }
 
 struct FlintApp {
     query: String,
-    results: Vec<AppEntry>,
+    results: Vec<ResultType>,
     items: Vec<AppEntry>,
     selected: usize,
     should_close: bool,
     has_focused: bool,
     theme: Theme,
+    _lock_file: File,
+    animation_progress: f32,
 }
 
-impl Default for FlintApp {
-    fn default() -> Self {
+impl FlintApp {
+    fn new() -> Result<Self, String> {
+        let lock_file = acquire_lock()?;
         let items = scan_desktop_apps();
         
-        Self {
+        Ok(Self {
             query: String::new(),
-            results: items.clone(),
+            results: Vec::new(),
             items,
             selected: 0,
             should_close: false,
             has_focused: false,
             theme: Theme::load_from_config(),
-        }
+            _lock_file: lock_file,
+            animation_progress: 0.0,
+        })
     }
 }
 
 impl eframe::App for FlintApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        apply_theme(ctx, &self.theme);
+        // Animate window appearance
+        if self.animation_progress < 1.0 {
+            self.animation_progress += 0.15;
+            ctx.request_repaint();
+        }
         
         // Close if clicked outside the window
         ctx.input(|i| {
@@ -139,7 +161,6 @@ impl eframe::App for FlintApp {
                 }
             }
             
-            // Also close if window loses focus (clicked on another app/desktop)
             if let Some(focused) = i.viewport().focused {
                 if !focused && i.pointer.any_click() {
                     self.should_close = true;
@@ -152,173 +173,434 @@ impl eframe::App for FlintApp {
             return;
         }
 
+        let opacity = self.animation_progress.min(1.0);
+        let scale = 0.95 + (0.05 * opacity);
+        
+        // Calculate dynamic window size
+        let window_width = 600.0;
+        let search_box_height = 50.0;
+        let result_item_height = 44.0;
+        let max_visible_results = 8;
+        let visible_results = self.results.len().min(max_visible_results);
+        let results_height = if visible_results > 0 {
+            (visible_results as f32 * result_item_height) + 10.0
+        } else {
+            0.0
+        };
+        let total_height = search_box_height + results_height;
+        
+        // Resize window based on content
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(window_width, total_height)));
+
+        let bg_rgb = self.theme.hex_to_rgb(&self.theme.background);
+        let border_rgb = self.theme.hex_to_rgb(&self.theme.border_color);
+        
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().inner_margin(egui::Margin::same(0.0)))
+            .frame(egui::Frame::none()
+                .fill(egui::Color32::from_rgb(
+                    (bg_rgb[0] * 255.0) as u8,
+                    (bg_rgb[1] * 255.0) as u8,
+                    (bg_rgb[2] * 255.0) as u8,
+                ))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgb(
+                        (border_rgb[0] * 255.0) as u8,
+                        (border_rgb[1] * 255.0) as u8,
+                        (border_rgb[2] * 255.0) as u8,
+                    )
+                ))
+                .rounding(self.theme.border_radius)
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 2.0),
+                    blur: 8.0,
+                    spread: 0.0,
+                    color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 50),
+                }))
             .show(ctx, |ui| {
-            let total_width = ui.available_width();
-            
-            ui.add_space(25.0);
-            
-            let text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
-            
-            ui.horizontal(|ui| {
-                ui.add_space(20.0);
                 
-                let response = ui.add_sized(
-                    [total_width - 40.0, 40.0],
-                    egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Type to search...")
-                        .text_color(egui::Color32::from_rgb(
-                            (text_rgb[0] * 255.0) as u8,
-                            (text_rgb[1] * 255.0) as u8,
-                            (text_rgb[2] * 255.0) as u8,
-                        ))
-                        .font(egui::TextStyle::Heading)
-                        .id(egui::Id::new("search_field"))
-                );
-
-                if !self.has_focused {
-                    ui.ctx().memory_mut(|mem| mem.request_focus(response.id));
-                    self.has_focused = true;
-                }
+            ui.set_min_width(window_width);
+            ui.set_max_width(window_width);
                 
-                ui.add_space(20.0);
-            });
-            
-            ui.add_space(15.0);
-
-            // Handle keyboard input
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.should_close = true;
-            }
-
-            if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) && !self.results.is_empty() {
-                self.selected = (self.selected + 1) % self.results.len();
-            }
-
-            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && !self.results.is_empty() {
-                if self.selected == 0 {
-                    self.selected = self.results.len() - 1;
-                } else {
-                    self.selected -= 1;
-                }
-            }
-
-            if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.results.is_empty() {
-                if let Some(app) = self.results.get(self.selected) {
-                    launch_app(&app.desktop_id);
-                    self.should_close = true;
-                }
-            }
-
-            // Update search results
-            if !self.query.is_empty() {
-                let matcher = SkimMatcherV2::default();
-                let query = self.query.clone();
+            // Center everything with animation
+            ui.vertical(|ui| {
+                // Search box with Spotlight style
+                let text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
                 
-                let mut scored_results: Vec<(i64, AppEntry)> = self
-                    .items
-                    .par_iter()
-                    .filter_map(|app| {
-                        matcher.fuzzy_match(&app.name, &query)
-                            .map(|score| (score, app.clone()))
-                    })
-                    .collect();
+                ui.add_space(5.0);
+                ui.add_space(5.0);
                 
-                scored_results.sort_by(|a, b| b.0.cmp(&a.0));
-                self.results = scored_results.into_iter().map(|(_, app)| app).collect();
-                
-                if self.selected >= self.results.len() && !self.results.is_empty() {
-                    self.selected = 0;
-                }
-            } else {
-                self.results = self.items.clone();
-                if self.selected >= self.results.len() && !self.results.is_empty() {
-                    self.selected = 0;
-                }
-            }
+                // Search input
+                ui.horizontal(|ui| {
+                    ui.add_space(15.0);
+                    
+                    let response = ui.add_sized(
+                        [window_width - 30.0, 30.0],
+                        egui::TextEdit::singleline(&mut self.query)
+                            .hint_text("Search...")
+                            .frame(false)
+                            .text_color(egui::Color32::from_rgb(
+                                (text_rgb[0] * 255.0) as u8,
+                                (text_rgb[1] * 255.0) as u8,
+                                (text_rgb[2] * 255.0) as u8,
+                            ))
+                            .font(egui::FontId::proportional(20.0))
+                            .id(egui::Id::new("search_field"))
+                    );
 
-            // Show results
-            if !self.results.is_empty() {
-                egui::ScrollArea::vertical()
-                    .max_height(400.0)
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                    .show(ui, |ui| {
-                        ui.set_width(total_width);
-                        
-                        for (i, app) in self.results.iter().enumerate() {
-                            let is_selected = i == self.selected;
-                            
-                            let bg_rgb = self.theme.hex_to_rgb(&self.theme.selection_bg);
-                            let text_rgb = self.theme.hex_to_rgb(&self.theme.selection_text);
-                            let normal_text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
-                            
-                            let bg_color = if is_selected {
-                                egui::Color32::from_rgb(
-                                    (bg_rgb[0] * 255.0) as u8,
-                                    (bg_rgb[1] * 255.0) as u8,
-                                    (bg_rgb[2] * 255.0) as u8,
-                                )
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            };
-                            
-                            let text_color = if is_selected {
-                                egui::Color32::from_rgb(
-                                    (text_rgb[0] * 255.0) as u8,
-                                    (text_rgb[1] * 255.0) as u8,
-                                    (text_rgb[2] * 255.0) as u8,
-                                )
-                            } else {
-                                egui::Color32::from_rgb(
-                                    (normal_text_rgb[0] * 255.0) as u8,
-                                    (normal_text_rgb[1] * 255.0) as u8,
-                                    (normal_text_rgb[2] * 255.0) as u8,
-                                )
-                            };
-                            
-                            ui.horizontal(|ui| {
-                                ui.add_space(10.0);
-                                
-                                let button = egui::Button::new(
-                                    egui::RichText::new(&app.name)
-                                        .color(text_color)
-                                        .size(self.theme.font_size)
-                                )
-                                .min_size(egui::vec2(total_width - 20.0, 36.0))
-                                .fill(bg_color)
-                                .rounding(self.theme.border_radius);
-                                
-                                let response = ui.add(button);
-                                
-                                // Scroll to selected item
-                                if is_selected {
-                                    response.scroll_to_me(Some(egui::Align::Center));
-                                }
-                                
-                                if response.clicked() {
+                    if !self.has_focused {
+                        ui.ctx().memory_mut(|mem| mem.request_focus(response.id));
+                        self.has_focused = true;
+                    }
+                    
+                    ui.add_space(15.0);
+                });
+                
+                // Separator line if there are results
+                if !self.results.is_empty() {
+                    ui.add_space(5.0);
+                    ui.separator();
+                }
+
+                    // Handle keyboard input
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        self.should_close = true;
+                    }
+
+                    if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) && !self.results.is_empty() {
+                        self.selected = (self.selected + 1) % self.results.len();
+                    }
+
+                    if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && !self.results.is_empty() {
+                        if self.selected == 0 {
+                            self.selected = self.results.len() - 1;
+                        } else {
+                            self.selected -= 1;
+                        }
+                    }
+
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.results.is_empty() {
+                        if let Some(result) = self.results.get(self.selected) {
+                            match result {
+                                ResultType::App(app) => {
                                     launch_app(&app.desktop_id);
                                     self.should_close = true;
                                 }
-                                
-                                ui.add_space(10.0);
-                            });
+                                ResultType::Calculator(result) => {
+                                    copy_to_clipboard(result);
+                                    self.should_close = true;
+                                }
+                                ResultType::Command(cmd) => {
+                                    execute_command(cmd);
+                                    self.should_close = true;
+                                }
+                                ResultType::WebSearch(query) => {
+                                    open_web_search(query);
+                                    self.should_close = true;
+                                }
+                            }
                         }
-                    });
-            } else if !self.query.is_empty() {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(20.0);
-                    ui.label(
-                        egui::RichText::new("No results found")
-                            .color(egui::Color32::from_rgb(120, 120, 120))
-                            .size(14.0)
-                    );
-                });
-            }
+                    }
+
+                    // Update search results
+                    self.results.clear();
+                    
+                    if !self.query.is_empty() {
+                        // Calculator mode
+                        if self.query.starts_with('=') {
+                            let expr = self.query[1..].trim();
+                            if !expr.is_empty() {
+                                match meval::eval_str(expr) {
+                                    Ok(result) => {
+                                        self.results.push(ResultType::Calculator(result.to_string()));
+                                    }
+                                    Err(_) => {}
+                                }
+                            }
+                        }
+                        // Shell command mode
+                        else if self.query.starts_with('$') {
+                            let cmd = self.query[1..].trim();
+                            if !cmd.is_empty() {
+                                self.results.push(ResultType::Command(cmd.to_string()));
+                            }
+                        }
+                        // Web search mode
+                        else if self.query.starts_with('@') {
+                            let search = self.query[1..].trim();
+                            if !search.is_empty() {
+                                self.results.push(ResultType::WebSearch(search.to_string()));
+                            }
+                        }
+                        // Normal app search
+                        else {
+                            let matcher = SkimMatcherV2::default();
+                            let query = self.query.clone();
+                            
+                            let mut scored_results: Vec<(i64, AppEntry)> = self
+                                .items
+                                .par_iter()
+                                .filter_map(|app| {
+                                    matcher.fuzzy_indices(&app.name, &query)
+                                        .map(|(score, indices)| {
+                                            let mut app_with_match = app.clone();
+                                            app_with_match.match_indices = indices;
+                                            (score, app_with_match)
+                                        })
+                                })
+                                .collect();
+                            
+                            scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+                            
+                            for (_, app) in scored_results.into_iter().take(max_visible_results) {
+                                self.results.push(ResultType::App(app));
+                            }
+                            
+                            // Offer web search if no apps found
+                            if self.results.is_empty() {
+                                self.results.push(ResultType::WebSearch(query));
+                            }
+                        }
+                        
+                        if self.selected >= self.results.len() && !self.results.is_empty() {
+                            self.selected = 0;
+                        }
+                    }
+
+                    // Show results
+                    if !self.results.is_empty() {
+                        egui::ScrollArea::vertical()
+                            .max_height(result_item_height * max_visible_results as f32)
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                            .show(ui, |ui| {
+                                
+                                for (i, result) in self.results.iter().enumerate() {
+                                    let is_selected = i == self.selected;
+                                    
+                                    let sel_bg_rgb = self.theme.hex_to_rgb(&self.theme.selection_bg);
+                                    let text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
+                                    let sel_text_rgb = self.theme.hex_to_rgb(&self.theme.selection_text);
+                                    
+                                    let item_bg = if is_selected {
+                                        egui::Color32::from_rgb(
+                                            (sel_bg_rgb[0] * 255.0) as u8,
+                                            (sel_bg_rgb[1] * 255.0) as u8,
+                                            (sel_bg_rgb[2] * 255.0) as u8,
+                                        )
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    };
+                                    
+                                    let item_frame = egui::Frame::none()
+                                        .fill(item_bg)
+                                        .inner_margin(egui::Margin::symmetric(15.0, 8.0));
+                                    
+                                    let response = item_frame.show(ui, |ui| {
+                                        ui.set_min_height(result_item_height - 16.0);
+                                        ui.set_width(window_width);
+                                        
+                                        ui.horizontal(|ui| {
+                                            match result {
+                                                ResultType::App(app) => {
+                                                    render_highlighted_text(
+                                                        ui,
+                                                        &app.name,
+                                                        &app.match_indices,
+                                                        is_selected,
+                                                        &self.theme,
+                                                        opacity,
+                                                    );
+                                                }
+                                                ResultType::Calculator(res) => {
+                                                    let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                    ui.label(
+                                                        egui::RichText::new(format!("🧮 {}", res))
+                                                            .color(egui::Color32::from_rgb(
+                                                                (color[0] * 255.0) as u8,
+                                                                (color[1] * 255.0) as u8,
+                                                                (color[2] * 255.0) as u8,
+                                                            ))
+                                                            .size(self.theme.font_size)
+                                                    );
+                                                }
+                                                ResultType::Command(cmd) => {
+                                                    let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                    ui.label(
+                                                        egui::RichText::new(format!("💻 {}", cmd))
+                                                            .color(egui::Color32::from_rgb(
+                                                                (color[0] * 255.0) as u8,
+                                                                (color[1] * 255.0) as u8,
+                                                                (color[2] * 255.0) as u8,
+                                                            ))
+                                                            .size(self.theme.font_size)
+                                                    );
+                                                }
+                                                ResultType::WebSearch(query) => {
+                                                    let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                    ui.label(
+                                                        egui::RichText::new(format!("🔍 Search: {}", query))
+                                                            .color(egui::Color32::from_rgb(
+                                                                (color[0] * 255.0) as u8,
+                                                                (color[1] * 255.0) as u8,
+                                                                (color[2] * 255.0) as u8,
+                                                            ))
+                                                            .size(self.theme.font_size)
+                                                    );
+                                                }
+                                            }
+                                        });
+                                    }).response;
+                                    
+                                    // Scroll to selected item
+                                    if is_selected {
+                                        response.scroll_to_me(Some(egui::Align::Center));
+                                    }
+                                    
+                                    if response.clicked() {
+                                        match result {
+                                            ResultType::App(app) => {
+                                                launch_app(&app.desktop_id);
+                                                self.should_close = true;
+                                            }
+                                            ResultType::Calculator(res) => {
+                                                copy_to_clipboard(res);
+                                                self.should_close = true;
+                                            }
+                                            ResultType::Command(cmd) => {
+                                                execute_command(cmd);
+                                                self.should_close = true;
+                                            }
+                                            ResultType::WebSearch(query) => {
+                                                open_web_search(query);
+                                                self.should_close = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                    }
+            });
         });
 
         ctx.request_repaint();
     }
+}
+
+fn render_highlighted_text(
+    ui: &mut egui::Ui,
+    text: &str,
+    match_indices: &[usize],
+    is_selected: bool,
+    theme: &Theme,
+    _opacity: f32,
+) {
+    let normal_color = if is_selected {
+        theme.hex_to_rgb(&theme.selection_text)
+    } else {
+        theme.hex_to_rgb(&theme.text_color)
+    };
+    
+    let highlight_color = theme.hex_to_rgb(&theme.highlight_color);
+    
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        
+        for (i, ch) in text.chars().enumerate() {
+            let color = if match_indices.contains(&i) {
+                egui::Color32::from_rgb(
+                    (highlight_color[0] * 255.0) as u8,
+                    (highlight_color[1] * 255.0) as u8,
+                    (highlight_color[2] * 255.0) as u8,
+                )
+            } else {
+                egui::Color32::from_rgb(
+                    (normal_color[0] * 255.0) as u8,
+                    (normal_color[1] * 255.0) as u8,
+                    (normal_color[2] * 255.0) as u8,
+                )
+            };
+            
+            let weight = if match_indices.contains(&i) {
+                egui::FontId::proportional(theme.font_size)
+            } else {
+                egui::FontId::proportional(theme.font_size)
+            };
+            
+            ui.label(
+                egui::RichText::new(ch.to_string())
+                    .color(color)
+                    .font(weight)
+            );
+        }
+    });
+}
+
+fn copy_to_clipboard(text: &str) {
+    let _ = Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(text.as_bytes())?;
+            }
+            child.wait()
+        });
+}
+
+fn execute_command(cmd: &str) {
+    let _ = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .spawn();
+}
+
+fn open_web_search(query: &str) {
+    let url = format!("https://duckduckgo.com/?q={}", urlencoding::encode(query));
+    let _ = Command::new("xdg-open")
+        .arg(url)
+        .spawn();
+}
+
+fn acquire_lock() -> Result<File, String> {
+    let lock_path = get_lock_path();
+    
+    if lock_path.exists() {
+        if let Ok(content) = fs::read_to_string(&lock_path) {
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                let check = Command::new("kill")
+                    .arg("-0")
+                    .arg(pid.to_string())
+                    .output();
+                    
+                if let Ok(output) = check {
+                    if output.status.success() {
+                        return Err("Flint is already running!".to_string());
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_file(&lock_path);
+    }
+    
+    let mut lock_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&lock_path)
+        .map_err(|e| format!("Failed to create lock file: {}", e))?;
+    
+    let pid = std::process::id();
+    lock_file.write_all(pid.to_string().as_bytes())
+        .map_err(|e| format!("Failed to write PID: {}", e))?;
+    
+    Ok(lock_file)
+}
+
+fn get_lock_path() -> PathBuf {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/tmp/flint-{}", std::env::var("USER").unwrap_or_else(|_| "user".to_string())));
+    PathBuf::from(runtime_dir).join("flint.lock")
 }
 
 fn launch_app(desktop_id: &str) {
@@ -351,6 +633,7 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                                 apps.push(AppEntry {
                                     name: app_name,
                                     desktop_id: file_stem.to_string(),
+                                    match_indices: Vec::new(),
                                 });
                             }
                         }
@@ -366,67 +649,47 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
 }
 
 fn apply_theme(ctx: &egui::Context, theme: &Theme) {
-    let mut visuals = egui::Visuals::dark();
+    let mut visuals = egui::Visuals::light();
     
-    let bg_rgb = theme.hex_to_rgb(&theme.background);
-    let border_rgb = theme.hex_to_rgb(&theme.border_color);
-    
-    visuals.panel_fill = egui::Color32::from_rgb(
-        (bg_rgb[0] * 255.0) as u8,
-        (bg_rgb[1] * 255.0) as u8,
-        (bg_rgb[2] * 255.0) as u8,
-    );
-    
-    visuals.window_fill = egui::Color32::from_rgb(
-        (bg_rgb[0] * 255.0) as u8,
-        (bg_rgb[1] * 255.0) as u8,
-        (bg_rgb[2] * 255.0) as u8,
-    );
-    
-    visuals.window_stroke.color = egui::Color32::from_rgb(
-        (border_rgb[0] * 255.0) as u8,
-        (border_rgb[1] * 255.0) as u8,
-        (border_rgb[2] * 255.0) as u8,
-    );
-    
-    visuals.window_stroke.width = 1.0;
+    visuals.window_fill = egui::Color32::TRANSPARENT;
+    visuals.panel_fill = egui::Color32::TRANSPARENT;
     
     ctx.set_visuals(visuals);
+    
     if theme.font_family != "System" {
-     let home = std::env::var("HOME").unwrap();
-     let possible_files = [
-        format!("{}/.fonts/{}.ttf", home, theme.font_family),
-        format!("{}/.fonts/{}.otf", home, theme.font_family),
-        format!("{}/.local/share/fonts/{}.ttf", home, theme.font_family),
-        format!("{}/.local/share/fonts/{}.otf", home, theme.font_family),
-        format!("/usr/share/fonts/truetype/{}.ttf", theme.font_family),
-        format!("/usr/share/fonts/opentype/{}.otf", theme.font_family),
-        format!("/usr/local/share/fonts/{}.ttf", theme.font_family),
-        format!("/usr/local/share/fonts/{}.otf", theme.font_family),
-        format!("/usr/share/fonts/{}.ttf", theme.font_family),
-        format!("/usr/share/fonts/{}.otf", theme.font_family),
-    ];
+        let home = std::env::var("HOME").unwrap();
+        let possible_files = [
+            format!("{}/.fonts/{}.ttf", home, theme.font_family),
+            format!("{}/.fonts/{}.otf", home, theme.font_family),
+            format!("{}/.local/share/fonts/{}.ttf", home, theme.font_family),
+            format!("{}/.local/share/fonts/{}.otf", home, theme.font_family),
+            format!("/usr/share/fonts/truetype/{}.ttf", theme.font_family),
+            format!("/usr/share/fonts/opentype/{}.otf", theme.font_family),
+            format!("/usr/local/share/fonts/{}.ttf", theme.font_family),
+            format!("/usr/local/share/fonts/{}.otf", theme.font_family),
+            format!("/usr/share/fonts/{}.ttf", theme.font_family),
+            format!("/usr/share/fonts/{}.otf", theme.font_family),
+        ];
 
-    let mut found = false;
-    for path in &possible_files {
-        if std::path::Path::new(path).exists() {
-            if let Ok(font_data) = std::fs::read(path) {
-                let mut fonts = egui::FontDefinitions::default();
-                fonts.font_data.insert(theme.font_family.clone(), egui::FontData::from_owned(font_data));
-                fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, theme.font_family.clone());
-                fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, theme.font_family.clone());
-                ctx.set_fonts(fonts);
-                println!("Loaded font: {}", path);
-                found = true;
-                break;
+        let mut found = false;
+        for path in &possible_files {
+            if std::path::Path::new(path).exists() {
+                if let Ok(font_data) = std::fs::read(path) {
+                    let mut fonts = egui::FontDefinitions::default();
+                    fonts.font_data.insert(theme.font_family.clone(), egui::FontData::from_owned(font_data));
+                    fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, theme.font_family.clone());
+                    fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, theme.font_family.clone());
+                    ctx.set_fonts(fonts);
+                    found = true;
+                    break;
+                }
             }
         }
-    }
 
-    if !found {
-        println!("Font not found in any common directory!");
+        if !found {
+            eprintln!("Font '{}' not found in any common directory", theme.font_family);
+        }
     }
-}
 }
 
 fn get_config_dir() -> PathBuf {
@@ -435,21 +698,22 @@ fn get_config_dir() -> PathBuf {
 }
 
 fn create_default_theme(theme_path: &PathBuf) {
-    let default_theme = r#"# Flint Theme Configuration
+    let default_theme = r#"# Flint Theme Configuration - Spotlight Style
 # Use hex colors like #RRGGBB
 
 # Main window colors
-background=#1e1e1e
-text_color=#d4d4d4
-selection_bg=#0078d4
+background=#ffffff
+text_color=#333333
+selection_bg=#007aff
 selection_text=#ffffff
-border_color=#3c3c3c
+border_color=#cccccc
+highlight_color=#007aff
 
 # Font settings
-font_size=16
+font_size=18
 font_family=System
 
-# Border radius
+# Border radius (0 = square corners, higher = more rounded)
 border_radius=0
 "#;
     
@@ -460,24 +724,37 @@ border_radius=0
 }
 
 fn main() -> eframe::Result<()> {
+    let app = match FlintApp::new() {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 500.0])
+            .with_inner_size([600.0, 50.0])
             .with_decorations(false)
             .with_always_on_top()
             .with_resizable(false)
             .with_window_level(egui::WindowLevel::AlwaysOnTop)
-            .with_taskbar(false),
-        centered: true,
+            .with_taskbar(false)
+            .with_window_type(egui::X11WindowType::Utility)
+            .with_position(egui::pos2(
+                (1920.0 - 600.0) / 2.0,
+                200.0,
+            )),
+        centered: false,
         ..Default::default()
     };
 
     eframe::run_native(
         "Flint",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            Box::new(FlintApp::default())
+            Box::new(app)
         }),
     )
 }
