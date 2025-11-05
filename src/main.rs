@@ -767,9 +767,16 @@ fn looks_like_url(text: &str) -> bool {
                text.starts_with("ftp://") || text.starts_with("file://");
     }
     
-    // Domain-like patterns
+    // Domain-like patterns with optional paths
     if text.contains('.') && !text.contains(' ') {
-        let parts: Vec<&str> = text.split('.').collect();
+        let domain_part = if text.contains('/') {
+            // Extract domain part before the first slash
+            text.split('/').next().unwrap_or("")
+        } else {
+            text
+        };
+        
+        let parts: Vec<&str> = domain_part.split('.').collect();
         if parts.len() >= 2 {
             let last_part = parts.last().unwrap();
             
@@ -821,7 +828,7 @@ fn looks_like_url(text: &str) -> bool {
                 "airforce", "police", "fire", "rescue", "emergency",
             ];
             
-            // Check if the last part matches any common TLD
+            // Check if the domain part matches any common TLD
             return common_tlds.iter().any(|&tld| *last_part == tld) || 
                    last_part.len() == 2 || // Any 2-letter country code
                    last_part.starts_with("xn--"); // Internationalized domain names
