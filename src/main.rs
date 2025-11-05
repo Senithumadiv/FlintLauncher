@@ -115,6 +115,7 @@ enum ResultType {
 struct AppEntry {
     name: String,
     desktop_id: String,
+    exec_command: String,
     match_indices: Vec<usize>,
 }
 
@@ -553,35 +554,44 @@ if !self.query.is_empty() {
         }
     }
     
-    // Normal app search (only if no other results found)
-    if self.results.is_empty() {
-        let matcher = SkimMatcherV2::default();
-        let query = self.query.clone();
-        
-        let mut scored_results: Vec<(i64, AppEntry)> = self
-            .items
-            .par_iter()
-            .filter_map(|app| {
-                matcher.fuzzy_indices(&app.name, &query)
-                    .map(|(score, indices)| {
-                        let mut app_with_match = app.clone();
-                        app_with_match.match_indices = indices;
-                        (score, app_with_match)
-                    })
-            })
-            .collect();
-        
-        scored_results.sort_by(|a, b| b.0.cmp(&a.0));
-        
-        for (_, app) in scored_results.into_iter().take(max_visible_results) {
-            self.results.push(ResultType::App(app));
-        }
-        
-        // Offer web search if no apps found
-        if self.results.is_empty() {
-            self.results.push(ResultType::WebSearch(query));
-        }
+// Normal app search (only if no other results found)
+if self.results.is_empty() {
+    let matcher = SkimMatcherV2::default();
+    let query = self.query.clone();
+    
+    let mut scored_results: Vec<(i64, AppEntry)> = self
+        .items
+        .par_iter()
+        .filter_map(|app| {
+            // Search in app name
+            if let Some((score, indices)) = matcher.fuzzy_indices(&app.name, &query) {
+                let mut app_with_match = app.clone();
+                app_with_match.match_indices = indices;
+                return Some((score + 100, app_with_match)); // Boost name matches
+            }
+            
+            // Search in command/executable
+            if let Some((score, _)) = matcher.fuzzy_indices(&app.exec_command, &query) {
+                let mut app_with_match = app.clone();
+                app_with_match.match_indices = Vec::new(); // No highlight for command matches
+                return Some((score, app_with_match));
+            }
+            
+            None
+        })
+        .collect();
+    
+    scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+    
+    for (_, app) in scored_results.into_iter().take(max_visible_results) {
+        self.results.push(ResultType::App(app));
     }
+    
+    // Offer web search if no apps found
+    if self.results.is_empty() {
+        self.results.push(ResultType::WebSearch(query));
+    }
+}
     
     if self.selected >= self.results.len() && !self.results.is_empty() {
         self.selected = 0;
@@ -1330,19 +1340,30 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                 if path.extension().and_then(|e| e.to_str()) == Some("desktop") {
                     if let Ok(content) = fs::read_to_string(&path) {
                         let mut name = None;
+                        let mut exec = None;
                         
                         for line in content.lines() {
                             if line.starts_with("Name=") {
                                 name = Some(line["Name=".len()..].to_string());
+                            } else if line.starts_with("Exec=") {
+                                // Extract the command, removing flags and % arguments
+                                let exec_line = &line["Exec=".len()..];
+                                let command = extract_command_from_exec(exec_line);
+                                exec = Some(command);
+                            }
+                            
+                            // Stop if we have both name and exec
+                            if name.is_some() && exec.is_some() {
                                 break;
                             }
                         }
                         
-                        if let Some(app_name) = name {
+                        if let (Some(app_name), Some(exec_command)) = (name, exec) {
                             if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
                                 apps.push(AppEntry {
                                     name: app_name,
                                     desktop_id: file_stem.to_string(),
+                                    exec_command,  // Store the command
                                     match_indices: Vec::new(),
                                 });
                             }
@@ -1356,6 +1377,24 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
     apps.sort_by(|a, b| a.name.cmp(&b.name));
     apps.dedup_by(|a, b| a.name == b.name);
     apps
+}
+
+// Helper function to extract clean command from Exec line
+fn extract_command_from_exec(exec_line: &str) -> String {
+    // Remove common desktop file flags and arguments
+    let cleaned = exec_line
+        .split_whitespace()
+        .find(|part| {
+            !part.starts_with('%') && 
+            !part.starts_with('@') &&
+            !part.starts_with('-') &&
+            !part.is_empty()
+        })
+        .unwrap_or(exec_line)
+        .to_string();
+    
+    // Remove any remaining % arguments
+    cleaned.split('%').next().unwrap_or(&cleaned).to_string()
 }
 
 fn apply_theme(ctx: &egui::Context, theme: &Theme) {

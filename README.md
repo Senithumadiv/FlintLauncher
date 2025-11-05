@@ -1,4 +1,13 @@
-# Flint Launcher ⚡
+```ascii
+    ███████╗ ██╗     ██╗███╗   ██╗████████╗
+    ██╔════╝ ██║     ██║████╗  ██║╚══██╔══╝
+    █████╗   ██║     ██║██╔██╗ ██║   ██║   
+    ██╔══╝   ██║     ██║██║╚██╗██║   ██║   
+    ██║      ███████╗██║██║ ╚████║   ██║   
+    ╚═╝      ╚══════╝╚═╝╚═╝  ╚═══╝   ╚═╝   
+    
+          ⚡ L A U N C H E R ⚡
+```
 
 - A fast, customizable application launcher written in Rust for Linux with theming support.
 
