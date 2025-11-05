@@ -854,7 +854,8 @@ fn get_config_dir() -> PathBuf {
 
 fn create_default_theme(theme_path: &PathBuf) {
     let default_theme = r#"# Flint Theme Configuration - Spotlight Style
-# Use hex colors like #RRGGBB
+# Made By SenithuMadiv ( https://github.com/Senithumadiv )
+    # Use hex colors like #RRGGBB
 
 # Main window colors
 background=#ffffff
