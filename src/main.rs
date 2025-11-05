@@ -103,6 +103,7 @@ enum ResultType {
     Calculator(String),
     Command(String),
     WebSearch(String),
+    Url(String),  // Add URL variant
 }
 
 #[derive(Clone)]
@@ -386,19 +387,23 @@ impl eframe::App for FlintApp {
                     ui.add_space(15.0);
                 });
                 
-                // Separator line if there are results - fade in with window
                 if !self.results.is_empty() {
                     ui.add_space(5.0);
                     let separator_alpha = (window_alpha * 255.0) as u8;
+                    let border_rgb = self.theme.hex_to_rgb(&self.theme.border_color);
                     let separator_color = egui::Color32::from_rgba_premultiplied(
-                        35, 42, 45, separator_alpha  // Using Everblush's lighter background #232a2d
+                        (border_rgb[0] * 255.0) as u8,
+                        (border_rgb[1] * 255.0) as u8,
+                        (border_rgb[2] * 255.0) as u8,
+                        separator_alpha
                     );
                     
                     // Create a custom separator using a filled rectangle
                     let separator_height = 1.0;
+                    let available_width = ui.available_width();
                     let separator_rect = egui::Rect::from_min_size(
-                        egui::pos2(0.0, ui.cursor().top()),  // Start from current cursor position
-                        egui::vec2(window_width, separator_height)
+                        ui.cursor().min,  // Use current cursor position
+                        egui::vec2(available_width, separator_height)
                     );
                     ui.painter().rect_filled(separator_rect, 0.0, separator_color);
                     
@@ -442,6 +447,10 @@ impl eframe::App for FlintApp {
                                 open_web_search(query);
                                 self.should_close = true;
                             }
+                            ResultType::Url(url) => {
+                                open_url(&url);
+                                self.should_close = true;
+                            }
                         }
                     }
                 }
@@ -450,8 +459,17 @@ impl eframe::App for FlintApp {
                 self.results.clear();
                 
                 if !self.query.is_empty() {
+                    // URL detection - check this FIRST
+                    if looks_like_url(&self.query) {
+                        let url = if self.query.contains("://") {
+                            self.query.clone()
+                        } else {
+                            format!("https://{}", self.query)
+                        };
+                        self.results.push(ResultType::Url(url));
+                    }
                     // Calculator mode
-                    if self.query.starts_with('=') {
+                    else if self.query.starts_with('=') {
                         let expr = self.query[1..].trim();
                         if !expr.is_empty() {
                             match meval::eval_str(expr) {
@@ -590,7 +608,20 @@ impl eframe::App for FlintApp {
                                             ResultType::WebSearch(query) => {
                                                 let color = if is_selected { sel_text_rgb } else { text_rgb };
                                                 ui.label(
-                                                    egui::RichText::new(format!("🔍 Search: {}", query))
+                                                    egui::RichText::new(format!("🔍 Search DuckDuckGo : {} ", query))
+                                                        .color(egui::Color32::from_rgba_premultiplied(
+                                                            (color[0] * 255.0 * item_alpha) as u8,
+                                                            (color[1] * 255.0 * item_alpha) as u8,
+                                                            (color[2] * 255.0 * item_alpha) as u8,
+                                                            (item_alpha * 255.0) as u8,
+                                                        ))
+                                                        .size(self.theme.font_size)
+                                                );
+                                            }
+                                            ResultType::Url(url) => {
+                                                let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                ui.label(
+                                                    egui::RichText::new(format!("🌐 Open: {}", url))
                                                         .color(egui::Color32::from_rgba_premultiplied(
                                                             (color[0] * 255.0 * item_alpha) as u8,
                                                             (color[1] * 255.0 * item_alpha) as u8,
@@ -625,6 +656,10 @@ impl eframe::App for FlintApp {
                                         }
                                         ResultType::WebSearch(query) => {
                                             open_web_search(query);
+                                            self.should_close = true;
+                                        }
+                                        ResultType::Url(url) => {
+                                            open_url(&url);
                                             self.should_close = true;
                                         }
                                     }
@@ -715,6 +750,85 @@ fn open_web_search(query: &str) {
     let _ = Command::new("xdg-open")
         .arg(url)
         .spawn();
+}
+
+fn open_url(url: &str) {
+    let _ = Command::new("xdg-open")
+        .arg(url)
+        .spawn();
+}
+
+fn looks_like_url(text: &str) -> bool {
+    let text = text.trim();
+    
+    // Common URL patterns
+    if text.contains("://") {
+        return text.starts_with("http://") || text.starts_with("https://") || 
+               text.starts_with("ftp://") || text.starts_with("file://");
+    }
+    
+    // Domain-like patterns
+    if text.contains('.') && !text.contains(' ') {
+        let parts: Vec<&str> = text.split('.').collect();
+        if parts.len() >= 2 {
+            let last_part = parts.last().unwrap();
+            
+            // Comprehensive list of common TLDs
+            let common_tlds = [
+                // Generic TLDs
+                "com", "org", "net", "info", "biz", "name", "pro",
+                // Country code TLDs
+                "io", "co", "me", "tv", "ai", "dev", "app", "tech", "xyz", "store",
+                "online", "site", "website", "space", "club", "fun", "live", "work",
+                "cloud", "digital", "media", "news", "blog", "shop", "art", "design",
+                "world", "global", "link", "click", "lol", "top", "win", "bid",
+                // Traditional country codes
+                "us", "uk", "ca", "au", "de", "fr", "jp", "cn", "in", "br", "ru",
+                "it", "es", "nl", "se", "no", "dk", "fi", "pl", "ch", "at", "be",
+                "ie", "nz", "sg", "hk", "kr", "tw", "mx", "za", "tr", "gr", "pt",
+                // More country codes
+                "eu", "asia", "africa", "lat", "berlin", "london", "nyc", "tokyo",
+                // Newer TLDs
+                "guru", "expert", "services", "solutions", "systems", "technology",
+                "network", "group", "company", "center", "support", "community",
+                "agency", "studio", "exchange", "foundation", "institute", "management",
+                "partners", "ventures", "capital", "enterprises", "holdings", "international",
+                "market", "tools", "equipment", "supplies", "gallery", "academy",
+                "education", "school", "university", "institute", "training", "careers",
+                "jobs", "recruitment", "health", "medical", "clinic", "hospital",
+                "pharmacy", "dental", "fit", "fitness", "yoga", "travel", "tours",
+                "vacations", "holiday", "hotel", "restaurant", "cafe", "bar", "pub",
+                "food", "pizza", "sushi", "fashion", "shoes", "clothing", "jewelry",
+                "beauty", "hair", "skin", "spa", "salon", "auto", "cars", "bike",
+                "boats", "cycles", "motorcycles", "realestate", "properties", "rentals",
+                "apartments", "villas", "condos", "construction", "contractors",
+                "builders", "engineering", "architecture", "design", "photography",
+                "photos", "pictures", "graphics", "art", "music", "film", "movies",
+                "theater", "tickets", "events", "shows", "entertainment", "games",
+                "gaming", "casino", "poker", "bet", "bingo", "lottery", "sports",
+                "football", "soccer", "basketball", "baseball", "hockey", "tennis",
+                "golf", "fishing", "hunting", "outdoors", "adventure", "camping",
+                "hiking", "biking", "running", "swimming", "yoga", "fitness",
+                "finance", "bank", "insurance", "investments", "loans", "credit",
+                "money", "capital", "wealth", "trading", "forex", "crypto",
+                "bitcoin", "ethereum", "blockchain", "nft", "metaverse",
+                "energy", "green", "eco", "solar", "wind", "water", "renewable",
+                "organic", "natural", "sustainable", "recycle", "environment",
+                "charity", "foundation", "ngo", "nonprofit", "volunteer",
+                "government", "gov", "mil", "edu", "ac", "govt", "parliament",
+                "law", "legal", "attorney", "lawyer", "justice", "court",
+                "security", "safety", "protection", "defense", "army", "navy",
+                "airforce", "police", "fire", "rescue", "emergency",
+            ];
+            
+            // Check if the last part matches any common TLD
+            return common_tlds.iter().any(|&tld| *last_part == tld) || 
+                   last_part.len() == 2 || // Any 2-letter country code
+                   last_part.starts_with("xn--"); // Internationalized domain names
+        }
+    }
+    
+    false
 }
 
 fn acquire_lock() -> Result<File, String> {

@@ -16,8 +16,13 @@ A fast, customizable application launcher written in Rust for Linux with theming
 - **Configurable Font Size & Radius** – Adjust UI scale and roundness to your preference  
 - **Minimal UI** – Clean, distraction-free interface with centered layout  
 - **Keyboard Driven** – Full keyboard navigation for quick control  
-- **Google Search Integration** – Instantly search the web when no local app matches  
-- **Parallel Search** – Uses Rayon for smooth, non-blocking filtering 
+- **Multiple Search Modes** – Apps, URLs, web search, calculator, and commands
+- **URL Detection** – Automatically detects and opens websites (youtube.com, github.com, etc.)
+- **Smart Calculator** – Quick calculations with `=` prefix
+- **Shell Commands** – Execute terminal commands with `$` prefix
+- **Web Search** – Search DuckDuckGo with `@` prefix
+- **Smooth Animations** – Beautiful fade-in and drop-down animations
+- **Parallel Search** – Uses Rayon for smooth, non-blocking filtering
 
 ## 🚀 Installation
 
