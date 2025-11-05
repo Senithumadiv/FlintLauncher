@@ -18,9 +18,11 @@
 - **Keyboard Driven** – Full keyboard navigation for quick control  
 - **Multiple Search Modes** – Apps, URLs, web search, calculator, and commands
 - **URL Detection** – Automatically detects and opens websites (youtube.com, github.com, etc.)
-- **Smart Calculator** – Quick calculations with `=` prefix
+- **Smart Calculator** – Quick calculations
 - **Shell Commands** – Execute terminal commands with `$` prefix
 - **Web Search** – Search DuckDuckGo with `@` prefix
+- **File Search** – Search files with `file:`
+- **Emoji Search** – Search emoji with `e:`
 - **Smooth Animations** – Beautiful fade-in and drop-down animations
 - **Parallel Search** – Uses Rayon for smooth, non-blocking filtering
 - **Instant Search**: Start typing after `:` to see matching emojis

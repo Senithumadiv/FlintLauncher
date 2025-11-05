@@ -271,32 +271,33 @@ impl FlintApp {
 impl eframe::App for FlintApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Update animations
-        let window_animating = self.window_animation.update();
+        let _window_animating = self.window_animation.update();
         self.update_result_animations();
         
-        let still_animating = window_animating || self.result_animations.iter().any(|a| a.progress < 1.0);
+        let still_animating = self.window_animation.progress < 1.0 || self.result_animations.iter().any(|a| a.progress < 1.0);
         
         if still_animating {
             ctx.request_repaint();
         }
         
-        // Close if clicked outside the window
-        ctx.input(|i| {
-            if i.pointer.any_click() {
-                if let Some(pos) = i.pointer.interact_pos() {
-                    let rect = ctx.screen_rect();
-                    if !rect.contains(pos) {
-                        self.should_close = true;
-                    }
-                }
-            }
-            
-            if let Some(focused) = i.viewport().focused {
-                if !focused && i.pointer.any_click() {
+        // Close if clicked outside the window - ROFI STYLE (FIXED)
+        if ctx.input(|i| i.pointer.any_click()) {
+            if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+                let rect = ctx.screen_rect();
+                if !rect.contains(pos) {
                     self.should_close = true;
                 }
             }
-        });
+        }
+
+        // Close if window loses focus AFTER initial focus - FIXED
+        if self.has_focused {
+            if let Some(focused) = ctx.input(|i| i.viewport().focused) {
+                if !focused {
+                    self.should_close = true;
+                }
+            }
+        }
         
         if self.should_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -476,104 +477,116 @@ impl eframe::App for FlintApp {
                     }
                 }
 
-                // Update search results
-                self.results.clear();
-                
-                if !self.query.is_empty() {
-                    // Emoji search (starts with :)
-                    if self.query.starts_with(':') {
-                        let emoji_query = &self.query[1..].trim();
-                        if !emoji_query.is_empty() {
-                            let emoji_results = search_emojis(emoji_query);
-                            for (name, emoji) in emoji_results {
-                                self.results.push(ResultType::Emoji(name, emoji));
-                            }
-                        }
-                    }
-                    // Currency conversion - try online first
-                    else if let Some((from, to, result)) = self.runtime.block_on(convert_currency_online(&self.query)) {
-                        self.results.push(ResultType::Currency(from, to, result));
-                    }
-                    // URL detection
-                    else if looks_like_url(&self.query) {
-                        let url = if self.query.contains("://") {
-                            self.query.clone()
-                        } else {
-                            format!("https://{}", self.query)
-                        };
-                        self.results.push(ResultType::Url(url));
-                    }
-                    // File search (when no prefix)
-                    else if !self.query.starts_with('=') && 
-                            !self.query.starts_with('$') && 
-                            !self.query.starts_with('@') &&
-                            self.query.len() >= 2 {
-                        let file_results = search_files(&self.query);
-                        for path in file_results {
-                            self.results.push(ResultType::File(path));
-                        }
-                    }
-                    // Calculator mode
-                    else if self.query.starts_with('=') {
-                        let expr = self.query[1..].trim();
-                        if !expr.is_empty() {
-                            match meval::eval_str(expr) {
-                                Ok(result) => {
-                                    self.results.push(ResultType::Calculator(result.to_string()));
-                                }
-                                Err(_) => {}
-                            }
-                        }
-                    }
-                    // Shell command mode
-                    else if self.query.starts_with('$') {
-                        let cmd = self.query[1..].trim();
-                        if !cmd.is_empty() {
-                            self.results.push(ResultType::Command(cmd.to_string()));
-                        }
-                    }
-                    // Web search mode
-                    else if self.query.starts_with('@') {
-                        let search = self.query[1..].trim();
-                        if !search.is_empty() {
-                            self.results.push(ResultType::WebSearch(search.to_string()));
-                        }
-                    }
-                    
-                    // Normal app search (only if no other results found)
-                    if self.results.is_empty() {
-                        let matcher = SkimMatcherV2::default();
-                        let query = self.query.clone();
-                        
-                        let mut scored_results: Vec<(i64, AppEntry)> = self
-                            .items
-                            .par_iter()
-                            .filter_map(|app| {
-                                matcher.fuzzy_indices(&app.name, &query)
-                                    .map(|(score, indices)| {
-                                        let mut app_with_match = app.clone();
-                                        app_with_match.match_indices = indices;
-                                        (score, app_with_match)
-                                    })
-                            })
-                            .collect();
-                        
-                        scored_results.sort_by(|a, b| b.0.cmp(&a.0));
-                        
-                        for (_, app) in scored_results.into_iter().take(max_visible_results) {
-                            self.results.push(ResultType::App(app));
-                        }
-                        
-                        // Offer web search if no apps found
-                        if self.results.is_empty() {
-                            self.results.push(ResultType::WebSearch(query));
-                        }
-                    }
-                    
-                    if self.selected >= self.results.len() && !self.results.is_empty() {
-                        self.selected = 0;
-                    }
+// Update search results
+self.results.clear();
+
+if !self.query.is_empty() {
+    // File search (triggered with file: prefix)
+    if self.query.starts_with("file:") {
+        let file_query = &self.query[5..].trim();
+        if !file_query.is_empty() {
+            let file_results = search_files(file_query);
+            for path in file_results {
+                self.results.push(ResultType::File(path));
+            }
+        } else {
+            // Show hint when no query after file:
+            self.results.push(ResultType::Command("Search files...".to_string()));
+        }
+    }
+    // Emoji search (starts with e:)
+    else if self.query.starts_with("e:") {
+        let emoji_query = &self.query[2..].trim();
+        if !emoji_query.is_empty() {
+            let emoji_results = search_emojis(emoji_query);
+            for (name, emoji) in emoji_results {
+                self.results.push(ResultType::Emoji(name, emoji));
+            }
+        } else {
+            // Show hint when no query after e:
+            self.results.push(ResultType::Command("Search emojis...".to_string()));
+        }
+    }
+    // Currency conversion - try online first
+    else if let Some((from, to, result)) = self.runtime.block_on(convert_currency_online(&self.query)) {
+        self.results.push(ResultType::Currency(from, to, result));
+    }
+    // URL detection
+    else if looks_like_url(&self.query) {
+        let url = if self.query.contains("://") {
+            self.query.clone()
+        } else {
+            format!("https://{}", self.query)
+        };
+        self.results.push(ResultType::Url(url));
+    }
+    // Calculator mode - NO LONGER REQUIRES = PREFIX
+    else if is_calculation(&self.query) {
+        let expr = self.query.trim();
+        if !expr.is_empty() {
+            match meval::eval_str(expr) {
+                Ok(result) => {
+                    self.results.push(ResultType::Calculator(result.to_string()));
                 }
+                Err(_) => {}
+            }
+        }
+    }
+    // Shell command mode
+    else if self.query.starts_with('$') {
+        let cmd = &self.query[1..].trim();
+        if !cmd.is_empty() {
+            self.results.push(ResultType::Command(cmd.to_string()));
+        } else {
+            // Show hint when no query after $
+            self.results.push(ResultType::Command("Enter shell command...".to_string()));
+        }
+    }
+    // Web search mode
+    else if self.query.starts_with('@') {
+        let search = &self.query[1..].trim();
+        if !search.is_empty() {
+            self.results.push(ResultType::WebSearch(search.to_string()));
+        } else {
+            // Show hint when no query after @
+            self.results.push(ResultType::Command("Search the web...".to_string()));
+        }
+    }
+    
+    // Normal app search (only if no other results found)
+    if self.results.is_empty() {
+        let matcher = SkimMatcherV2::default();
+        let query = self.query.clone();
+        
+        let mut scored_results: Vec<(i64, AppEntry)> = self
+            .items
+            .par_iter()
+            .filter_map(|app| {
+                matcher.fuzzy_indices(&app.name, &query)
+                    .map(|(score, indices)| {
+                        let mut app_with_match = app.clone();
+                        app_with_match.match_indices = indices;
+                        (score, app_with_match)
+                    })
+            })
+            .collect();
+        
+        scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+        
+        for (_, app) in scored_results.into_iter().take(max_visible_results) {
+            self.results.push(ResultType::App(app));
+        }
+        
+        // Offer web search if no apps found
+        if self.results.is_empty() {
+            self.results.push(ResultType::WebSearch(query));
+        }
+    }
+    
+    if self.selected >= self.results.len() && !self.results.is_empty() {
+        self.selected = 0;
+    }
+}
 
                 // Show results with drop down animation
                 if !self.results.is_empty() {
@@ -628,7 +641,7 @@ impl eframe::App for FlintApp {
                                             ResultType::Calculator(res) => {
                                                 let color = if is_selected { sel_text_rgb } else { text_rgb };
                                                 ui.label(
-                                                    egui::RichText::new(format!("🧮 {}", res))
+                                                    egui::RichText::new(format!("🧮 {} = {}", self.query, res))
                                                         .color(egui::Color32::from_rgba_premultiplied(
                                                             (color[0] * 255.0 * item_alpha) as u8,
                                                             (color[1] * 255.0 * item_alpha) as u8,
@@ -680,8 +693,12 @@ impl eframe::App for FlintApp {
                                             ResultType::File(path) => {
                                                 let color = if is_selected { sel_text_rgb } else { text_rgb };
                                                 let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown");
+                                                let parent_dir = path.parent()
+                                                    .and_then(|p| p.file_name())
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or("");
                                                 ui.label(
-                                                    egui::RichText::new(format!("📄 {}", file_name))
+                                                    egui::RichText::new(format!("📄 {} ({})", file_name, parent_dir))
                                                         .color(egui::Color32::from_rgba_premultiplied(
                                                             (color[0] * 255.0 * item_alpha) as u8,
                                                             (color[1] * 255.0 * item_alpha) as u8,
@@ -691,19 +708,19 @@ impl eframe::App for FlintApp {
                                                         .size(self.theme.font_size)
                                                 );
                                             }
-                                            ResultType::Emoji(name, emoji) => {
-                                                let color = if is_selected { sel_text_rgb } else { text_rgb };
-                                                ui.label(
-                                                    egui::RichText::new(format!("{} :{}", emoji, name))
-                                                        .color(egui::Color32::from_rgba_premultiplied(
-                                                            (color[0] * 255.0 * item_alpha) as u8,
-                                                            (color[1] * 255.0 * item_alpha) as u8,
-                                                            (color[2] * 255.0 * item_alpha) as u8,
-                                                            (item_alpha * 255.0) as u8,
-                                                        ))
-                                                        .size(self.theme.font_size)
-                                                );
-                                            }
+ResultType::Emoji(name, emoji) => {
+    let color = if is_selected { sel_text_rgb } else { text_rgb };
+    ui.label(
+        egui::RichText::new(format!("{} :{}", emoji, name))
+            .color(egui::Color32::from_rgba_premultiplied(
+                (color[0] * 255.0 * item_alpha) as u8,
+                (color[1] * 255.0 * item_alpha) as u8,
+                (color[2] * 255.0 * item_alpha) as u8,
+                (item_alpha * 255.0) as u8,
+            ))
+            .size(self.theme.font_size)
+    );
+}
                                             ResultType::Currency(from, to, result) => {
                                                 let color = if is_selected { sel_text_rgb } else { text_rgb };
                                                 ui.label(
@@ -826,6 +843,29 @@ fn render_highlighted_text(
 #[derive(Debug, Deserialize)]
 struct ExchangeRatesResponse {
     rates: std::collections::HashMap<String, f64>,
+}
+
+// Check if a string looks like a mathematical expression
+fn is_calculation(query: &str) -> bool {
+    let trimmed = query.trim();
+    
+    // Must contain at least one operator and numbers
+    let has_operator = trimmed.contains('+') || 
+                      trimmed.contains('-') || 
+                      trimmed.contains('*') || 
+                      trimmed.contains('/') ||
+                      trimmed.contains('%') ||
+                      trimmed.contains('^');
+    
+    let has_numbers = trimmed.chars().any(|c| c.is_ascii_digit());
+    
+    // Should not contain letters (except for math constants like pi, e, but we'll keep it simple)
+    let has_letters = trimmed.chars().any(|c| c.is_ascii_alphabetic() && c != 'e' && c != 'E' && c != 'p' && c != 'P' && c != 'i' && c != 'I');
+    
+    // Should be reasonable length for a calculation
+    let reasonable_length = trimmed.len() >= 2 && trimmed.len() <= 50;
+    
+    has_operator && has_numbers && !has_letters && reasonable_length
 }
 
 // Currency code mapping for case-insensitive support
@@ -1031,67 +1071,159 @@ fn search_files(query: &str) -> Vec<PathBuf> {
 }
 
 fn search_emojis(query: &str) -> Vec<(String, String)> {
-    let emojis = [
-        ("smile", "😊"),
-        ("laugh", "😂"),
-        ("heart", "❤️"),
-        ("fire", "🔥"),
-        ("star", "⭐"),
-        ("thumbsup", "👍"),
-        ("ok", "👌"),
-        ("clap", "👏"),
-        ("pray", "🙏"),
-        ("eyes", "👀"),
-        ("cool", "😎"),
-        ("wink", "😉"),
-        ("kiss", "😘"),
-        ("tongue", "😛"),
-        ("sunglasses", "😎"),
-        ("thinking", "🤔"),
-        ("rocket", "🚀"),
-        ("computer", "💻"),
-        ("book", "📖"),
-        ("muscle", "💪"),
-        ("100", "💯"),
-        ("warning", "⚠️"),
-        ("check", "✅"),
-        ("cross", "❌"),
-        ("question", "❓"),
-        ("exclamation", "❗"),
-        ("rust", "🦀"),
-        ("python", "🐍"),
-        ("java", "☕"),
-        ("javascript", "🟨"),
-        ("github", "🐙"),
-        ("linux", "🐧"),
-        ("apple", "🍎"),
-        ("windows", "🪟"),
-        ("android", "🤖"),
-        ("money", "💰"),
-        ("clock", "⏰"),
-        ("calendar", "📅"),
-        ("email", "📧"),
-        ("phone", "📱"),
-        ("camera", "📷"),
-        ("music", "🎵"),
-        ("video", "🎬"),
-        ("game", "🎮"),
-        ("food", "🍕"),
-        ("coffee", "☕"),
-        ("beer", "🍺"),
-        ("car", "🚗"),
-        ("plane", "✈️"),
-        ("train", "🚆"),
-        ("bike", "🚲"),
-        ("boat", "⛵"),
-    ];
+    use emojis::Emoji;
     
     let query_lower = query.to_lowercase();
-    emojis.iter()
-        .filter(|(name, _)| name.contains(&query_lower))
-        .map(|(name, emoji)| (name.to_string(), emoji.to_string()))
-        .take(5)
-        .collect()
+    
+    // Common aliases mapping for better search
+    let common_aliases: Vec<(&str, &str)> = vec![
+        // Smileys & Emotion
+        ("smile", "😊"), ("happy", "😊"), ("grin", "😁"), ("laugh", "😂"), ("joy", "😂"),
+        ("wink", "😉"), ("blush", "😊"), ("heart", "❤️"), ("love", "❤️"), ("kiss", "😘"),
+        ("tongue", "😛"), ("crazy", "😜"), ("wink2", "😜"), ("cool", "😎"), ("sunglasses", "😎"),
+        ("thinking", "🤔"), ("thinking_face", "🤔"), ("shush", "🤫"), ("silence", "🤫"),
+        ("wow", "😮"), ("surprise", "😮"), ("scream", "😱"), ("fear", "😱"), ("cry", "😢"),
+        ("sad", "😢"), ("tear", "😢"), ("angry", "😠"), ("mad", "😠"), ("rage", "😡"),
+        
+        // People & Body
+        ("thumbsup", "👍"), ("like", "👍"), ("ok", "👌"), ("clap", "👏"), ("pray", "🙏"),
+        ("thanks", "🙏"), ("wave", "👋"), ("hi", "👋"), ("muscle", "💪"), ("strong", "💪"),
+        ("point", "👉"), ("finger", "👉"), ("eyes", "👀"), ("see", "👀"), ("ear", "👂"),
+        ("listen", "👂"), ("nose", "👃"), ("mouth", "👄"), ("lips", "👄"), ("baby", "👶"),
+        ("child", "👦"), ("boy", "👦"), ("girl", "👧"), ("man", "👨"), ("woman", "👩"),
+        ("beard", "🧔"), ("blonde", "👱"), ("redhead", "👨‍🦰"), ("curly", "👨‍🦱"), ("bald", "👨‍🦲"),
+        
+        // Animals & Nature
+        ("monkey", "🐵"), ("dog", "🐶"), ("puppy", "🐶"), ("cat", "🐱"), ("kitten", "🐱"),
+        ("lion", "🦁"), ("tiger", "🐯"), ("horse", "🐴"), ("unicorn", "🦄"), ("cow", "🐮"),
+        ("pig", "🐷"), ("frog", "🐸"), ("mouse", "🐭"), ("hamster", "🐹"), ("rabbit", "🐰"),
+        ("bear", "🐻"), ("panda", "🐼"), ("koala", "🐨"), ("penguin", "🐧"), ("bird", "🐦"),
+        ("chicken", "🐔"), ("eagle", "🦅"), ("duck", "🦆"), ("owl", "🦉"), ("bat", "🦇"),
+        ("wolf", "🐺"), ("fox", "🦊"), ("raccoon", "🦝"), ("turtle", "🐢"), ("snake", "🐍"),
+        ("dragon", "🐲"), ("sauropod", "🦕"), ("trex", "🦖"), ("whale", "🐳"), ("dolphin", "🐬"),
+        ("fish", "🐟"), ("tropical", "🐠"), ("blowfish", "🐡"), ("shark", "🦈"), ("octopus", "🐙"),
+        ("shell", "🐚"), ("snail", "🐌"), ("butterfly", "🦋"), ("bug", "🐛"), ("ant", "🐜"),
+        ("bee", "🐝"), ("ladybug", "🐞"), ("cricket", "🦗"), ("spider", "🕷️"), ("scorpion", "🦂"),
+        ("flower", "🌸"), ("rose", "🌹"), ("sunflower", "🌻"), ("tree", "🌳"), ("palm", "🌴"),
+        ("cactus", "🌵"), ("sheaf", "🌾"), ("shamrock", "☘️"), ("maple", "🍁"), ("leaf", "🍃"),
+        
+        // Food & Drink
+        ("grape", "🍇"), ("melon", "🍈"), ("watermelon", "🍉"), ("orange", "🍊"), ("lemon", "🍋"),
+        ("banana", "🍌"), ("pineapple", "🍍"), ("apple", "🍎"), ("greenapple", "🍏"), ("pear", "🍐"),
+        ("peach", "🍑"), ("cherry", "🍒"), ("strawberry", "🍓"), ("kiwi", "🥝"), ("tomato", "🍅"),
+        ("coconut", "🥥"), ("avocado", "🥑"), ("eggplant", "🍆"), ("potato", "🥔"), ("carrot", "🥕"),
+        ("corn", "🌽"), ("pepper", "🌶️"), ("cucumber", "🥒"), ("broccoli", "🥦"), ("mushroom", "🍄"),
+        ("peanuts", "🥜"), ("bread", "🍞"), ("croissant", "🥐"), ("french", "🥖"), ("pretzel", "🥨"),
+        ("cheese", "🧀"), ("meat", "🍖"), ("poultry", "🍗"), ("bacon", "🥓"), ("hamburger", "🍔"),
+        ("fries", "🍟"), ("pizza", "🍕"), ("hotdog", "🌭"), ("taco", "🌮"), ("burrito", "🌯"),
+        ("egg", "🥚"), ("cooking", "🍳"), ("stew", "🍲"), ("bowl", "🍜"), ("popcorn", "🍿"),
+        ("salt", "🧂"), ("bento", "🍱"), ("rice", "🍚"), ("riceball", "🍙"), ("ricecracker", "🍘"),
+        ("sushi", "🍣"), ("dango", "🍡"), ("oden", "🍢"), ("shavedice", "🍧"), ("icecream", "🍨"),
+        ("doughnut", "🍩"), ("cookie", "🍪"), ("cake", "🍰"), ("cupcake", "🧁"), ("pie", "🥧"),
+        ("chocolate", "🍫"), ("candy", "🍬"), ("lollipop", "🍭"), ("custard", "🍮"), ("honey", "🍯"),
+        ("babybottle", "🍼"), ("milk", "🥛"), ("coffee", "☕"), ("tea", "🍵"), ("sake", "🍶"),
+        ("champagne", "🍾"), ("wine", "🍷"), ("cocktail", "🍸"), ("tropicaldrink", "🍹"), ("beer", "🍺"),
+        ("beers", "🍻"), ("clinking", "🥂"), ("tumbler", "🥃"), ("cup", "🥤"), ("chopsticks", "🥢"),
+        
+        // Activities & Sports
+        ("soccer", "⚽"), ("basketball", "🏀"), ("football", "🏈"), ("baseball", "⚾"), ("tennis", "🎾"),
+        ("volleyball", "🏐"), ("rugby", "🏉"), ("pool", "🎱"), ("pingpong", "🏓"), ("badminton", "🏸"),
+        ("hockey", "🏒"), ("fieldhockey", "🏑"), ("cricket", "🏏"), ("goal", "🥅"), ("dart", "🎯"),
+        ("golf", "⛳"), ("kite", "🪁"), ("fishing", "🎣"), ("boxing", "🥊"), ("martialarts", "🥋"),
+        ("running", "🏃"), ("surfing", "🏄"), ("swimming", "🏊"), ("weightlifting", "🏋️"), ("biking", "🚴"),
+        ("mountainbiking", "🚵"), ("cartwheel", "🤸"), ("wrestling", "🤼"), ("waterpolo", "🤽"), ("handball", "🤾"),
+        ("juggling", "🤹"), ("meditation", "🧘"), ("bath", "🛀"), ("sleep", "🛌"), ("arts", "🎨"),
+        ("music", "🎵"), ("microphone", "🎤"), ("headphone", "🎧"), ("saxophone", "🎷"), ("guitar", "🎸"),
+        ("piano", "🎹"), ("trumpet", "🎺"), ("violin", "🎻"), ("drum", "🥁"), ("game", "🎮"),
+        ("joystick", "🕹️"), ("slot", "🎰"), ("dice", "🎲"), ("chess", "♟️"), ("puzzle", "🧩"),
+        
+        // Travel & Places
+        ("car", "🚗"), ("taxi", "🚕"), ("jeep", "🚙"), ("bus", "🚌"), ("trolley", "🚎"),
+        ("racing", "🏎️"), ("policecar", "🚓"), ("ambulance", "🚑"), ("fireengine", "🚒"), ("minibus", "🚐"),
+        ("truck", "🚚"), ("delivery", "🚚"), ("articulated", "🚛"), ("tractor", "🚜"), ("scooter", "🛴"),
+        ("bike", "🚲"), ("motorcycle", "🏍️"), ("autorickshaw", "🛺"), ("train", "🚆"), ("metro", "🚇"),
+        ("tram", "🚊"), ("monorail", "🚝"), ("mountainrailway", "🚞"), ("bullet", "🚅"), ("train2", "🚄"),
+        ("lightrail", "🚈"), ("station", "🚉"), ("airplane", "✈️"), ("flight", "✈️"), ("rocket", "🚀"),
+        ("helicopter", "🚁"), ("satellite", "🛰️"), ("ufo", "🛸"), ("ship", "🚢"), ("boat", "⛵"),
+        ("sailboat", "⛵"), ("speedboat", "🚤"), ("ferry", "⛴️"), ("passengership", "🛳️"), ("anchor", "⚓"),
+        ("fuel", "⛽"), ("construction", "🚧"), ("verticaltraffic", "🚦"), ("trafficlight", "🚥"), ("busstop", "🚏"),
+        ("map", "🗺️"), ("world", "🌎"), ("japan", "🗾"), ("compass", "🧭"), ("mountain", "⛰️"),
+        ("snowmountain", "🏔️"), ("volcano", "🌋"), ("mountfuji", "🗻"), ("camping", "🏕️"), ("beach", "🏖️"),
+        ("island", "🏝️"), ("desert", "🏜️"), ("park", "🏞️"), ("stadium", "🏟️"), ("classical", "🏛️"),
+        ("building", "🏢"), ("house", "🏠"), ("home", "🏠"), ("office", "🏢"), ("postoffice", "🏤"),
+        ("hospital", "🏥"), ("bank", "🏦"), ("hotel", "🏨"), ("lovenotel", "🏩"), ("store", "🏪"),
+        ("school", "🏫"), ("department", "🏬"), ("factory", "🏭"), ("japanesecastle", "🏯"), ("europeancastle", "🏰"),
+        ("wedding", "💒"), ("tokyotower", "🗼"), ("statue", "🗽"), ("church", "⛪"), ("mosque", "🕌"),
+        ("synagogue", "🕍"), ("shrine", "⛩️"), ("kaaba", "🕋"), ("fountain", "⛲"), ("tent", "⛺"),
+        ("foggy", "🌁"), ("night", "🌃"), ("cityscape", "🏙️"), ("sunrise", "🌅"), ("sunset", "🌇"),
+        ("bridge", "🌉"), ("carousel", "🎠"), ("ferris", "🎡"), ("rollercoaster", "🎢"), ("barber", "💈"),
+        ("circus", "🎪"),
+        
+        // Objects
+        ("watch", "⌚"), ("iphone", "📱"), ("phone", "📱"), ("calling", "📲"), ("computer", "💻"),
+        ("keyboard", "⌨️"), ("desktop", "🖥️"), ("printer", "🖨️"), ("mouse", "🖱️"), ("trackball", "🖲️"),
+        ("joystick", "🕹️"), ("gamepad", "🎮"), ("lightbulb", "💡"), ("battery", "🔋"), ("electric", "🧯"),
+        ("money", "💰"), ("dollar", "💵"), ("yen", "💴"), ("euro", "💶"), ("pound", "💷"),
+        ("creditcard", "💳"), ("receipt", "🧾"), ("chart", "💹"), ("email", "✉️"), ("envelope", "✉️"),
+        ("incoming", "📨"), ("post", "📮"), ("package", "📦"), ("mailbox", "📫"), ("pencil", "✏️"),
+        ("pen", "🖊️"), ("crayon", "🖍️"), ("paintbrush", "🖌️"), ("scissors", "✂️"), ("ruler", "📏"),
+        ("wrench", "🔧"), ("hammer", "🔨"), ("tools", "🛠️"), ("knife", "🔪"), ("gun", "🔫"),
+        ("microscope", "🔬"), ("telescope", "🔭"), ("satellite", "📡"), ("syringe", "💉"), ("pill", "💊"),
+        ("door", "🚪"), ("bed", "🛏️"), ("couch", "🛋️"), ("toilet", "🚽"), ("shower", "🚿"),
+        ("bathtub", "🛁"), ("razor", "🪒"), ("lotion", "🧴"), ("safetypin", "🧷"), ("broom", "🧹"),
+        ("basket", "🧺"), ("roll", "🧻"), ("soap", "🧼"), ("sponge", "🧽"), ("fire", "🔥"),
+        ("bomb", "💣"), ("smoking", "🚬"), ("coffin", "⚰️"), ("urn", "⚱️"), ("clown", "🤡"),
+        
+        // Symbols
+        ("check", "✅"), ("mark", "✅"), ("cross", "❌"), ("wrong", "❌"), ("question", "❓"),
+        ("exclamation", "❗"), ("warning", "⚠️"), ("info", "ℹ️"), ("plus", "➕"), ("minus", "➖"),
+        ("divide", "➗"), ("equals", "🟰"), ("infinity", "♾️"), ("recycle", "♻️"), ("fleur", "⚜️"),
+        ("trident", "🔱"), ("namebadge", "📛"), ("beginner", "🔰"), ("o", "⭕"), ("whitecheck", "✅"),
+        ("ballot", "☑️"), ("radio", "🔘"), ("link", "🔗"), ("curly", "➰"), ("loop", "➿"),
+        ("part", "〽️"), ("eight", "✴️"), ("double", "‼️"), ("interrobang", "⁉️"), ("questionex", "⁉️"),
+        ("bangbang", "‼️"), ("tm", "™️"), ("copyright", "©️"), ("registered", "®️"), ("zero", "0️⃣"),
+        ("one", "1️⃣"), ("two", "2️⃣"), ("three", "3️⃣"), ("four", "4️⃣"), ("five", "5️⃣"),
+        ("six", "6️⃣"), ("seven", "7️⃣"), ("eightnum", "8️⃣"), ("nine", "9️⃣"), ("ten", "🔟"),
+        ("keycap", "#️⃣"), ("asterisk", "*️⃣"), ("play", "▶️"), ("pause", "⏸️"), ("stop", "⏹️"),
+        ("record", "⏺️"), ("forward", "⏩"), ("rewind", "⏪"), ("up", "🔼"), ("down", "🔽"),
+        ("next", "⏭️"), ("previous", "⏮️"), ("eject", "⏏️"), ("cinema", "🎦"), ("signal", "📶"),
+        ("vibration", "📳"), ("mobile", "📴"), ("female", "♀️"), ("male", "♂️"), ("medical", "⚕️"),
+        ("atom", "⚛️"), ("om", "🕉️"), ("starofdavid", "✡️"), ("wheeldharma", "☸️"), ("yinyang", "☯️"),
+        ("latin", "✝️"), ("starandcrescent", "☪️"), ("peace", "☮️"), ("coffee", "☕"), ("skull", "💀"),
+        ("poo", "💩"), ("robot", "🤖"), ("alien", "👽"), ("ghost", "👻"), ("angel", "👼"),
+        ("space", "🚀"), ("ufo", "🛸"), ("gun", "🔫"), ("knife", "🔪"), ("bomb", "💣"),
+    ];
+    
+    // First, search in common aliases (most user-friendly)
+    let alias_results: Vec<(String, String)> = common_aliases
+        .iter()
+        .filter(|(alias, _)| alias.contains(&query_lower))
+        .map(|(alias, emoji)| (alias.to_string(), emoji.to_string()))
+        .take(3)
+        .collect();
+    
+    // Then search in emoji names from the crate
+    let crate_results: Vec<(String, String)> = emojis::iter()
+        .filter_map(|emoji| {
+            if emoji.name().to_lowercase().contains(&query_lower) {
+                Some((emoji.name().to_string(), emoji.as_str().to_string()))
+            } else {
+                None
+            }
+        })
+        .take(2)
+        .collect();
+    
+    // Combine results, removing duplicates
+    let mut combined = alias_results;
+    for result in crate_results {
+        if !combined.iter().any(|(_, emoji)| emoji == &result.1) {
+            combined.push(result);
+        }
+    }
+    
+    combined.truncate(5);
+    combined
 }
 
 fn looks_like_url(text: &str) -> bool {
