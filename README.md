@@ -86,9 +86,9 @@ text_color=#dadada
 selection_bg=#e57474
 selection_text=#141b1e
 border_color=#2b3339
+highlight_color=#ffcc00
 font_size=16
-font_family=JetBrains Mono
-border_radius=6
+font_family=JetBrainsMonoNerdFont-Regular
 ```
 ### Light Theme
 ```conf
@@ -97,9 +97,9 @@ text_color=#2e3440
 selection_bg=#5e81ac
 selection_text=#ffffff
 border_color=#d8dee9
+highlight_color=#bf616a
 font_size=16
-font_family=System
-border_radius=6
+font_family=JetBrainsMonoNerdFont-Regular
 ```
 ### Catppuccin Macchiato
 ```conf
@@ -108,16 +108,11 @@ text_color=#cad3f5
 selection_bg=#8aadf4
 selection_text=#24273a
 border_color=#494d64
+highlight_color=#f5a97f
 font_size=16
-font_family=Fira Code
-border_radius=8
+font_family=JetBrainsMonoNerdFont-Regular
 ```
-### Custom Fonts
-```conf
-font_family=ZedMono Nerd Font Mono
-font_family=Fira Code
-font_family=JetBrains Mono
-```
+
 ## 🛠️ Building from Source
 ```bash
 git clone https://github.com/Senithumadiv/FlintLauncher.git
