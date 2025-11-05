@@ -8,12 +8,16 @@ A fast, customizable application launcher written in Rust for Linux with theming
 
 ## ✨ Features
 
-- **Lightning Fast** - Instant app searching and launching
-- **Fuzzy Search** - Find apps even with typos
-- **Custom Themes** - Easy theming with simple config files
-- **System Font Support** - Use any installed font on your system
-- **Minimal UI** - Clean, distraction-free interface
-- **Keyboard Driven** - Full keyboard navigation
+- **Lightning Fast** – Instant app searching and launching  
+- **Fuzzy Search** – Find apps even with typos  
+- **Custom Themes** – Easily configurable colors, borders, and fonts via `theme.conf`  
+- **System Font Support** – Automatically detects installed fonts from common directories  
+- **Highlight Matching** – Highlights matched characters in results  
+- **Configurable Font Size & Radius** – Adjust UI scale and roundness to your preference  
+- **Minimal UI** – Clean, distraction-free interface with centered layout  
+- **Keyboard Driven** – Full keyboard navigation for quick control  
+- **Google Search Integration** – Instantly search the web when no local app matches  
+- **Parallel Search** – Uses Rayon for smooth, non-blocking filtering 
 
 ## 🚀 Installation
 
