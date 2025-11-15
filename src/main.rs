@@ -1081,8 +1081,7 @@ fn search_files(query: &str) -> Vec<PathBuf> {
 }
 
 fn search_emojis(query: &str) -> Vec<(String, String)> {
-    use emojis::Emoji;
-    
+    // Remove the unused import line and keep the rest of the function
     let query_lower = query.to_lowercase();
     
     // Common aliases mapping for better search
@@ -1204,7 +1203,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("space", "🚀"), ("ufo", "🛸"), ("gun", "🔫"), ("knife", "🔪"), ("bomb", "💣"),
     ];
     
-    // First, search in common aliases (most user-friendly)
     let alias_results: Vec<(String, String)> = common_aliases
         .iter()
         .filter(|(alias, _)| alias.contains(&query_lower))
@@ -1212,8 +1210,7 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         .take(3)
         .collect();
     
-    // Then search in emoji names from the crate
-    let crate_results: Vec<(String, String)> = emojis::iter()
+        let crate_results: Vec<(String, String)> = emojis::iter()  // This uses the crate directly
         .filter_map(|emoji| {
             if emoji.name().to_lowercase().contains(&query_lower) {
                 Some((emoji.name().to_string(), emoji.as_str().to_string()))
@@ -1490,12 +1487,10 @@ fn main() -> eframe::Result<()> {
             .with_resizable(false)
             .with_window_level(egui::WindowLevel::AlwaysOnTop)
             .with_taskbar(false)
-            .with_window_type(egui::X11WindowType::Utility)
-            .with_position(egui::pos2(
-                (1920.0 - 600.0) / 2.0,
-                200.0,
-            )),
-        centered: false,
+            .with_window_type(egui::X11WindowType::Normal)  // CHANGED: Utility -> Normal
+            // REMOVED: .with_position() - let bspwm handle positioning
+            ,
+        centered: true,  // ADDED: Try to center on screen
         ..Default::default()
     };
 
@@ -1503,7 +1498,12 @@ fn main() -> eframe::Result<()> {
         "Flint",
         options,
         Box::new(move |cc| {
+            // Apply theme first
+            apply_theme(&cc.egui_ctx, &app.theme);
+            
+            // Focus the window
             cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            
             Box::new(app)
         }),
     )
