@@ -282,23 +282,23 @@ impl eframe::App for FlintApp {
         }
         
         // Close if clicked outside the window - ROFI STYLE (FIXED)
-        if ctx.input(|i| i.pointer.any_click()) {
-            if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                let rect = ctx.screen_rect();
-                if !rect.contains(pos) {
-                    self.should_close = true;
-                }
-            }
-        }
+//        if ctx.input(|i| i.pointer.any_click()) {
+//            if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+//                let rect = ctx.screen_rect();
+//                if !rect.contains(pos) {
+//                    self.should_close = true;
+//                }
+//            }
+//        }
 
         // Close if window loses focus AFTER initial focus - FIXED
-        if self.has_focused {
-            if let Some(focused) = ctx.input(|i| i.viewport().focused) {
-                if !focused {
-                    self.should_close = true;
-                }
-            }
-        }
+//        if self.has_focused {
+//            if let Some(focused) = ctx.input(|i| i.viewport().focused) {
+//                if !focused {
+//                    self.should_close = true;
+//                }
+//            }
+//        }
         
         if self.should_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1470,6 +1470,184 @@ border_radius=0
     let _ = fs::write(theme_path, default_theme);
 }
 
+fn get_monitor_center() -> Option<(f32, f32)> {
+    let mouse_position = get_mouse_position()?;
+    
+    // Try multiple methods to get monitor info
+    if let Some(center) = get_monitor_center_xrandr(mouse_position) {
+        return Some(center);
+    }
+    
+    if let Some(center) = get_monitor_center_xinerama(mouse_position) {
+        return Some(center);
+    }
+    
+    // Fallback: Use the monitor that contains the mouse based on common setups
+    get_monitor_center_fallback(mouse_position)
+}
+
+fn get_monitor_center_xrandr(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
+    let output = std::process::Command::new("xrandr")
+        .arg("--query")
+        .output()
+        .ok()?;
+    
+    let output_str = String::from_utf8(output.stdout).ok()?;
+    
+    for line in output_str.lines() {
+        if line.contains(" connected ") && line.contains("+") {
+            // Parse lines like: "eDP-1 connected primary 1920x1080+0+0"
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            
+            // Find the part that contains the geometry (resolution+position)
+            for part in &parts {
+                if part.contains('+') && part.contains('x') {
+                    // Geometry format: "1920x1080+0+0" or "1920x1080+1920+0" etc.
+                    if let Some(plus_pos) = part.find('+') {
+                        let resolution = &part[..plus_pos];
+                        let position = &part[plus_pos + 1..];
+                        
+                        let res_parts: Vec<&str> = resolution.split('x').collect();
+                        let pos_parts: Vec<&str> = position.split('+').collect();
+                        
+                        if res_parts.len() == 2 && pos_parts.len() == 2 {
+                            if let (Ok(width), Ok(height), Ok(monitor_x), Ok(monitor_y)) = (
+                                res_parts[0].parse::<f32>(),
+                                res_parts[1].parse::<f32>(),
+                                pos_parts[0].parse::<f32>(),
+                                pos_parts[1].parse::<f32>()
+                            ) {
+                                // Check if mouse is within this monitor
+                                if mouse_position.0 >= monitor_x && 
+                                   mouse_position.0 < monitor_x + width &&
+                                   mouse_position.1 >= monitor_y && 
+                                   mouse_position.1 < monitor_y + height {
+                                    return Some((monitor_x + width / 2.0, monitor_y + height / 2.0));
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_monitor_center_xinerama(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
+    // Try using xwininfo which is more reliable for multi-monitor setups
+    let output = std::process::Command::new("xwininfo")
+        .arg("-root")
+        .arg("-tree")
+        .output()
+        .ok()?;
+    
+    let output_str = String::from_utf8(output.stdout).ok()?;
+    
+    // This is a simpler approach - just get the root window dimensions
+    // For multi-monitor, this will give us the combined dimensions
+    let root_output = std::process::Command::new("xwininfo")
+        .arg("-root")
+        .output()
+        .ok()?;
+    
+    let root_str = String::from_utf8(root_output.stdout).ok()?;
+    
+    let mut width = 0.0;
+    let mut height = 0.0;
+    
+    for line in root_str.lines() {
+        if line.contains("Width:") {
+            if let Ok(w) = line.split(':').nth(1).unwrap_or("").trim().parse::<f32>() {
+                width = w;
+            }
+        } else if line.contains("Height:") {
+            if let Ok(h) = line.split(':').nth(1).unwrap_or("").trim().parse::<f32>() {
+                height = h;
+            }
+        }
+    }
+    
+    if width > 0.0 && height > 0.0 {
+        // For multi-monitor setups, we need a better approach
+        // Let's assume the mouse is in the primary monitor area
+        // This is a simplified approach
+        Some((width / 2.0, height / 2.0))
+    } else {
+        None
+    }
+}
+
+fn get_monitor_center_fallback(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
+    // Get display dimensions using xdpyinfo
+    let output = std::process::Command::new("xdpyinfo")
+        .output()
+        .ok()?;
+    
+    let output_str = String::from_utf8(output.stdout).ok()?;
+    
+    let mut screen_width = 1920.0; // default fallback
+    let mut screen_height = 1080.0; // default fallback
+    
+    for line in output_str.lines() {
+        if line.contains("dimensions:") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let dims: Vec<&str> = parts[1].split('x').collect();
+                if dims.len() == 2 {
+                    if let (Ok(w), Ok(h)) = (dims[0].parse::<f32>(), dims[1].parse::<f32>()) {
+                        screen_width = w;
+                        screen_height = h;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Simple heuristic for multi-monitor:
+    // If mouse is in the left half, assume left monitor; right half, right monitor
+    if screen_width > 2000.0 { // Likely dual monitor
+        let monitor_width = screen_width / 2.0;
+        if mouse_position.0 < monitor_width {
+            // Left monitor
+            Some((monitor_width / 2.0, screen_height / 2.0))
+        } else {
+            // Right monitor
+            Some((monitor_width + monitor_width / 2.0, screen_height / 2.0))
+        }
+    } else {
+        // Single monitor
+        Some((screen_width / 2.0, screen_height / 2.0))
+    }
+}
+
+fn get_mouse_position() -> Option<(f32, f32)> {
+    // Use xdotool to get mouse position
+    let output = std::process::Command::new("xdotool")
+        .arg("getmouselocation")
+        .output()
+        .ok()?;
+    
+    let output_str = String::from_utf8(output.stdout).ok()?;
+    
+    let mut x = None;
+    let mut y = None;
+    
+    for part in output_str.split_whitespace() {
+        if part.starts_with("x:") {
+            x = part[2..].parse::<f32>().ok();
+        } else if part.starts_with("y:") {
+            y = part[2..].parse::<f32>().ok();
+        }
+    }
+    
+    match (x, y) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    }
+}
+
 fn main() -> eframe::Result<()> {
     let app = match FlintApp::new() {
         Ok(app) => app,
@@ -1478,19 +1656,31 @@ fn main() -> eframe::Result<()> {
             std::process::exit(1);
         }
     };
+
+    let window_width = 600.0;
+    let initial_height = 50.0; // Initial height for search box only
     
+    // Get the center position of the monitor where the mouse is
+    let position = if let Some((center_x, center_y)) = get_monitor_center() {
+        println!("Positioning window at: ({}, {})", center_x - window_width / 2.0, center_y - initial_height / 2.0);
+        egui::pos2(center_x - window_width / 2.0, center_y - initial_height / 2.0)
+    } else {
+        eprintln!("Failed to get monitor center, using default position");
+        // Center on primary monitor as fallback
+        egui::pos2(100.0, 100.0)
+    };
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 50.0])
+            .with_inner_size([window_width, initial_height])
             .with_decorations(false)
             .with_always_on_top()
             .with_resizable(false)
             .with_window_level(egui::WindowLevel::AlwaysOnTop)
             .with_taskbar(false)
-            .with_window_type(egui::X11WindowType::Normal)  // CHANGED: Utility -> Normal
-            // REMOVED: .with_position() - let bspwm handle positioning
-            ,
-        centered: true,  // ADDED: Try to center on screen
+            .with_position(position)
+            .with_transparent(true),
+        centered: false,
         ..Default::default()
     };
 
@@ -1498,12 +1688,8 @@ fn main() -> eframe::Result<()> {
         "Flint",
         options,
         Box::new(move |cc| {
-            // Apply theme first
             apply_theme(&cc.egui_ctx, &app.theme);
-            
-            // Focus the window
             cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            
             Box::new(app)
         }),
     )
