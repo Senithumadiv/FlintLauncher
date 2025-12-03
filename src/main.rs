@@ -109,6 +109,7 @@ enum ResultType {
     File(PathBuf),
     Emoji(String, String),
     Currency(String, String, f64),
+    Flatpak(FlatpakAppEntry),
 }
 
 #[derive(Clone)]
@@ -116,6 +117,14 @@ struct AppEntry {
     name: String,
     desktop_id: String,
     exec_command: String,
+    match_indices: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct FlatpakAppEntry {
+    name: String,
+    flatpak_id: String,
+    description: String,
     match_indices: Vec<usize>,
 }
 
@@ -192,6 +201,7 @@ struct FlintApp {
     query: String,
     results: Vec<ResultType>,
     items: Vec<AppEntry>,
+    flatpak_items: Vec<FlatpakAppEntry>,
     selected: usize,
     should_close: bool,
     has_focused: bool,
@@ -206,6 +216,7 @@ impl FlintApp {
     fn new() -> Result<Self, String> {
         let lock_file = acquire_lock()?;
         let items = scan_desktop_apps();
+        let flatpak_items = scan_flatpak_apps();
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| format!("Failed to create async runtime: {}", e))?;
         
@@ -213,6 +224,7 @@ impl FlintApp {
             query: String::new(),
             results: Vec::new(),
             items,
+            flatpak_items,
             selected: 0,
             should_close: false,
             has_focused: false,
@@ -225,12 +237,10 @@ impl FlintApp {
     }
     
     fn update_result_animations(&mut self) {
-        // Ensure we have the right number of result animations
         if self.result_animations.len() != self.results.len() {
             self.result_animations = self.results.iter()
                 .enumerate()
                 .map(|(i, _)| {
-                    // Stagger the animations based on index with slide down effect
                     let delay = Duration::from_millis((i * 40) as u64).min(Duration::from_millis(200));
                     let mut anim = AnimationState::new(Duration::from_millis(250), AnimationType::SlideDown);
                     anim.start_time += delay;
@@ -239,7 +249,6 @@ impl FlintApp {
                 .collect();
         }
         
-        // Update all animations
         for anim in &mut self.result_animations {
             anim.update();
         }
@@ -249,8 +258,8 @@ impl FlintApp {
         self.result_animations.get(index)
             .map(|anim| {
                 match anim.animation_type {
-                    AnimationType::SlideDown => (1.0 - anim.ease_out()) * -30.0, // Slide down from above
-                    AnimationType::BounceDown => (1.0 - anim.ease_out_bounce()) * -40.0, // Bounce down effect
+                    AnimationType::SlideDown => (1.0 - anim.ease_out()) * -30.0,
+                    AnimationType::BounceDown => (1.0 - anim.ease_out_bounce()) * -40.0,
                     _ => 0.0,
                 }
             })
@@ -261,7 +270,7 @@ impl FlintApp {
         self.result_animations.get(index)
             .map(|anim| {
                 match anim.animation_type {
-                    AnimationType::SlideDown | AnimationType::BounceDown => anim.ease_out(), // Fade in while sliding
+                    AnimationType::SlideDown | AnimationType::BounceDown => anim.ease_out(),
                     _ => anim.ease_out(),
                 }
             })
@@ -271,7 +280,6 @@ impl FlintApp {
 
 impl eframe::App for FlintApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Update animations
         let _window_animating = self.window_animation.update();
         self.update_result_animations();
         
@@ -281,34 +289,13 @@ impl eframe::App for FlintApp {
             ctx.request_repaint();
         }
         
-        // Close if clicked outside the window - ROFI STYLE (FIXED)
-//        if ctx.input(|i| i.pointer.any_click()) {
-//            if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-//                let rect = ctx.screen_rect();
-//                if !rect.contains(pos) {
-//                    self.should_close = true;
-//                }
-//            }
-//        }
-
-        // Close if window loses focus AFTER initial focus - FIXED
-//        if self.has_focused {
-//            if let Some(focused) = ctx.input(|i| i.viewport().focused) {
-//                if !focused {
-//                    self.should_close = true;
-//                }
-//            }
-//        }
-        
         if self.should_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
 
-        // Animation values - Fade in for window
         let window_alpha = self.window_animation.ease_out();
         
-        // Calculate dynamic window size
         let window_width = 600.0;
         let search_box_height = 50.0;
         let result_item_height = 44.0;
@@ -321,7 +308,6 @@ impl eframe::App for FlintApp {
         };
         let total_height = search_box_height + results_height;
         
-        // Resize window based on content
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             window_width,
             total_height
@@ -330,7 +316,6 @@ impl eframe::App for FlintApp {
         let bg_rgb = self.theme.hex_to_rgb(&self.theme.background);
         let border_rgb = self.theme.hex_to_rgb(&self.theme.border_color);
         
-        // Apply window alpha to background for fade-in
         let bg_color = egui::Color32::from_rgba_premultiplied(
             (bg_rgb[0] * 255.0 * window_alpha) as u8,
             (bg_rgb[1] * 255.0 * window_alpha) as u8,
@@ -361,15 +346,12 @@ impl eframe::App for FlintApp {
             ui.set_min_width(window_width);
             ui.set_max_width(window_width);
                 
-            // Center everything with animation
             ui.vertical(|ui| {
-                // Search box with Spotlight style
                 let text_rgb = self.theme.hex_to_rgb(&self.theme.text_color);
                 
                 ui.add_space(5.0);
                 ui.add_space(5.0);
                 
-                // Search input - also fade in with window
                 let search_text_color = egui::Color32::from_rgba_premultiplied(
                     (text_rgb[0] * 255.0 * window_alpha) as u8,
                     (text_rgb[1] * 255.0 * window_alpha) as u8,
@@ -409,20 +391,17 @@ impl eframe::App for FlintApp {
                         separator_alpha
                     );
                     
-                    // Create a custom separator using a filled rectangle
                     let separator_height = 1.0;
                     let available_width = ui.available_width();
                     let separator_rect = egui::Rect::from_min_size(
-                        ui.cursor().min,  // Use current cursor position
+                        ui.cursor().min,
                         egui::vec2(available_width, separator_height)
                     );
                     ui.painter().rect_filled(separator_rect, 0.0, separator_color);
                     
-                    // Move cursor down past the separator
                     ui.add_space(separator_height + 5.0);
                 }
 
-                // Handle keyboard input
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     self.should_close = true;
                 }
@@ -444,6 +423,10 @@ impl eframe::App for FlintApp {
                         match result {
                             ResultType::App(app) => {
                                 launch_app(&app.desktop_id);
+                                self.should_close = true;
+                            }
+                            ResultType::Flatpak(app) => {
+                                launch_flatpak_app(&app.flatpak_id);
                                 self.should_close = true;
                             }
                             ResultType::Calculator(result) => {
@@ -478,11 +461,9 @@ impl eframe::App for FlintApp {
                     }
                 }
 
-// Update search results
 self.results.clear();
 
 if !self.query.is_empty() {
-    // File search (triggered with file: prefix)
     if self.query.starts_with("file:") {
         let file_query = &self.query[5..].trim();
         if !file_query.is_empty() {
@@ -491,11 +472,9 @@ if !self.query.is_empty() {
                 self.results.push(ResultType::File(path));
             }
         } else {
-            // Show hint when no query after file:
             self.results.push(ResultType::Command("Search files...".to_string()));
         }
     }
-    // Emoji search (starts with e:)
     else if self.query.starts_with("e:") {
         let emoji_query = &self.query[2..].trim();
         if !emoji_query.is_empty() {
@@ -504,15 +483,12 @@ if !self.query.is_empty() {
                 self.results.push(ResultType::Emoji(name, emoji));
             }
         } else {
-            // Show hint when no query after e:
             self.results.push(ResultType::Command("Search emojis...".to_string()));
         }
     }
-    // Currency conversion - try online first
     else if let Some((from, to, result)) = self.runtime.block_on(convert_currency_online(&self.query)) {
         self.results.push(ResultType::Currency(from, to, result));
     }
-    // URL detection
     else if looks_like_url(&self.query) {
         let url = if self.query.contains("://") {
             self.query.clone()
@@ -521,7 +497,6 @@ if !self.query.is_empty() {
         };
         self.results.push(ResultType::Url(url));
     }
-    // Calculator mode - NO LONGER REQUIRES = PREFIX
     else if is_calculation(&self.query) {
         let expr = self.query.trim();
         if !expr.is_empty() {
@@ -533,28 +508,23 @@ if !self.query.is_empty() {
             }
         }
     }
-    // Shell command mode
     else if self.query.starts_with('$') {
         let cmd = &self.query[1..].trim();
         if !cmd.is_empty() {
             self.results.push(ResultType::Command(cmd.to_string()));
         } else {
-            // Show hint when no query after $
             self.results.push(ResultType::Command("Enter shell command...".to_string()));
         }
     }
-    // Web search mode
     else if self.query.starts_with('@') {
         let search = &self.query[1..].trim();
         if !search.is_empty() {
             self.results.push(ResultType::WebSearch(search.to_string()));
         } else {
-            // Show hint when no query after @
             self.results.push(ResultType::Command("Search the web...".to_string()));
         }
     }
     
-// Normal app search (only if no other results found)
 if self.results.is_empty() {
     let matcher = SkimMatcherV2::default();
     let query = self.query.clone();
@@ -563,17 +533,41 @@ if self.results.is_empty() {
         .items
         .par_iter()
         .filter_map(|app| {
-            // Search in app name
             if let Some((score, indices)) = matcher.fuzzy_indices(&app.name, &query) {
                 let mut app_with_match = app.clone();
                 app_with_match.match_indices = indices;
-                return Some((score + 100, app_with_match)); // Boost name matches
+                return Some((score + 100, app_with_match));
             }
             
-            // Search in command/executable
             if let Some((score, _)) = matcher.fuzzy_indices(&app.exec_command, &query) {
                 let mut app_with_match = app.clone();
-                app_with_match.match_indices = Vec::new(); // No highlight for command matches
+                app_with_match.match_indices = Vec::new();
+                return Some((score, app_with_match));
+            }
+            
+            None
+        })
+        .collect();
+    
+    let mut flatpak_scored_results: Vec<(i64, FlatpakAppEntry)> = self
+        .flatpak_items
+        .par_iter()
+        .filter_map(|app| {
+            if let Some((score, indices)) = matcher.fuzzy_indices(&app.name, &query) {
+                let mut app_with_match = app.clone();
+                app_with_match.match_indices = indices;
+                return Some((score + 50, app_with_match));
+            }
+            
+            if let Some((score, _)) = matcher.fuzzy_indices(&app.description, &query) {
+                let mut app_with_match = app.clone();
+                app_with_match.match_indices = Vec::new();
+                return Some((score - 20, app_with_match));
+            }
+            
+            if let Some((score, _)) = matcher.fuzzy_indices(&app.flatpak_id, &query) {
+                let mut app_with_match = app.clone();
+                app_with_match.match_indices = Vec::new();
                 return Some((score, app_with_match));
             }
             
@@ -582,12 +576,24 @@ if self.results.is_empty() {
         .collect();
     
     scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+    flatpak_scored_results.sort_by(|a, b| b.0.cmp(&a.0));
     
-    for (_, app) in scored_results.into_iter().take(max_visible_results) {
-        self.results.push(ResultType::App(app));
+    let mut all_results: Vec<(i64, ResultType)> = Vec::new();
+    
+    for (score, app) in scored_results {
+        all_results.push((score, ResultType::App(app)));
     }
     
-    // Offer web search if no apps found
+    for (score, app) in flatpak_scored_results {
+        all_results.push((score, ResultType::Flatpak(app)));
+    }
+    
+    all_results.sort_by(|a, b| b.0.cmp(&a.0));
+    
+    for (_, result) in all_results.into_iter().take(max_visible_results) {
+        self.results.push(result);
+    }
+    
     if self.results.is_empty() {
         self.results.push(ResultType::WebSearch(query));
     }
@@ -598,7 +604,6 @@ if self.results.is_empty() {
     }
 }
 
-                // Show results with drop down animation
                 if !self.results.is_empty() {
                     egui::ScrollArea::vertical()
                         .max_height(result_item_height * max_visible_results as f32)
@@ -625,7 +630,6 @@ if self.results.is_empty() {
                                     egui::Color32::TRANSPARENT
                                 };
                                 
-                                // Apply vertical offset for drop down animation
                                 ui.add_space(item_offset);
                                 
                                 let item_frame = egui::Frame::none()
@@ -639,6 +643,26 @@ if self.results.is_empty() {
                                     ui.horizontal(|ui| {
                                         match result {
                                             ResultType::App(app) => {
+                                                render_highlighted_text(
+                                                    ui,
+                                                    &app.name,
+                                                    &app.match_indices,
+                                                    is_selected,
+                                                    &self.theme,
+                                                    item_alpha,
+                                                );
+                                            }
+                                            ResultType::Flatpak(app) => {
+                                                ui.label(
+                                                    egui::RichText::new("Flatpak:")
+                                                        .color(egui::Color32::from_rgba_premultiplied(
+                                                            (text_rgb[0] * 255.0 * item_alpha) as u8,
+                                                            (text_rgb[1] * 255.0 * item_alpha) as u8,
+                                                            (text_rgb[2] * 255.0 * item_alpha) as u8,
+                                                            (item_alpha * 255.0) as u8,
+                                                        ))
+                                                        .size(self.theme.font_size)
+                                                );
                                                 render_highlighted_text(
                                                     ui,
                                                     &app.name,
@@ -748,7 +772,6 @@ ResultType::Emoji(name, emoji) => {
                                     });
                                 }).response;
                                 
-                                // Scroll to selected item
                                 if is_selected {
                                     response.scroll_to_me(Some(egui::Align::Center));
                                 }
@@ -757,6 +780,10 @@ ResultType::Emoji(name, emoji) => {
                                     match result {
                                         ResultType::App(app) => {
                                             launch_app(&app.desktop_id);
+                                            self.should_close = true;
+                                        }
+                                        ResultType::Flatpak(app) => {
+                                            launch_flatpak_app(&app.flatpak_id);
                                             self.should_close = true;
                                         }
                                         ResultType::Calculator(res) => {
@@ -790,8 +817,7 @@ ResultType::Emoji(name, emoji) => {
                                     }
                                 }
                                 
-                                // Add space after item for proper spacing during animation
-                                ui.add_space(-item_offset); // Counteract the offset for next item
+                                ui.add_space(-item_offset);
                             }
                         });
                 }
@@ -855,11 +881,9 @@ struct ExchangeRatesResponse {
     rates: std::collections::HashMap<String, f64>,
 }
 
-// Check if a string looks like a mathematical expression
 fn is_calculation(query: &str) -> bool {
     let trimmed = query.trim();
     
-    // Must contain at least one operator and numbers
     let has_operator = trimmed.contains('+') || 
                       trimmed.contains('-') || 
                       trimmed.contains('*') || 
@@ -869,20 +893,16 @@ fn is_calculation(query: &str) -> bool {
     
     let has_numbers = trimmed.chars().any(|c| c.is_ascii_digit());
     
-    // Should not contain letters (except for math constants like pi, e, but we'll keep it simple)
     let has_letters = trimmed.chars().any(|c| c.is_ascii_alphabetic() && c != 'e' && c != 'E' && c != 'p' && c != 'P' && c != 'i' && c != 'I');
     
-    // Should be reasonable length for a calculation
     let reasonable_length = trimmed.len() >= 2 && trimmed.len() <= 50;
     
     has_operator && has_numbers && !has_letters && reasonable_length
 }
 
-// Currency code mapping for case-insensitive support
 fn normalize_currency_code(code: &str) -> Option<String> {
     let code_lower = code.to_lowercase();
     let result = match code_lower.as_str() {
-        // Major currencies
         "usd" | "dollar" | "dollars" => "USD",
         "eur" | "euro" | "euros" => "EUR", 
         "gbp" | "pound" | "pounds" | "sterling" => "GBP",
@@ -918,10 +938,8 @@ fn normalize_currency_code(code: &str) -> Option<String> {
         "sar" | "saudi riyal" => "SAR",
         "myr" | "malaysian ringgit" => "MYR",
         "ron" | "romanian leu" => "RON",
-        // Crypto currencies
         "btc" | "bitcoin" => "BTC",
         "eth" | "ethereum" => "ETH",
-        // Fallback - if it's a 3-letter code, use it as-is in uppercase
         _ if code.len() == 3 => {
             return Some(code.to_uppercase());
         }
@@ -938,14 +956,12 @@ async fn convert_currency_online(query: &str) -> Option<(String, String, f64)> {
         let mut from_currency_str = parts[1];
         let mut to_currency_str = parts.get(2).copied().unwrap_or("");
         
-        // Handle "convert" prefix
         if parts[0].to_lowercase() == "convert" && parts.len() >= 4 {
             amount_str = parts[1];
             from_currency_str = parts[2];
             to_currency_str = parts.get(3).copied().unwrap_or("");
         }
         
-        // Handle "to" separator
         if parts.len() >= 4 && parts[2].to_lowercase() == "to" {
             to_currency_str = parts[3];
         } else if parts.len() >= 4 && parts[0].to_lowercase() == "convert" && parts[3].to_lowercase() == "to" {
@@ -961,12 +977,10 @@ async fn convert_currency_online(query: &str) -> Option<(String, String, f64)> {
             normalize_currency_code(from_currency_str),
             normalize_currency_code(to_currency_str),
         ) {
-            // Skip if currencies are the same
             if from_currency == to_currency {
                 return Some((from_currency.to_string(), to_currency.to_string(), amount));
             }
             
-            // Use ExchangeRate-API which supports LKR and many other currencies
             let client = reqwest::Client::new();
             let url = format!("https://api.exchangerate-api.com/v4/latest/{}", from_currency);
             
@@ -982,7 +996,6 @@ async fn convert_currency_online(query: &str) -> Option<(String, String, f64)> {
                     }
                 }
                 Err(_) => {
-                    // Fallback to Frankfurter API if ExchangeRate-API fails
                     let fallback_url = format!("https://api.frankfurter.app/latest?from={}", from_currency);
                     if let Ok(fallback_response) = client.get(&fallback_url).send().await {
                         if fallback_response.status().is_success() {
@@ -1081,12 +1094,9 @@ fn search_files(query: &str) -> Vec<PathBuf> {
 }
 
 fn search_emojis(query: &str) -> Vec<(String, String)> {
-    // Remove the unused import line and keep the rest of the function
     let query_lower = query.to_lowercase();
     
-    // Common aliases mapping for better search
     let common_aliases: Vec<(&str, &str)> = vec![
-        // Smileys & Emotion
         ("smile", "😊"), ("happy", "😊"), ("grin", "😁"), ("laugh", "😂"), ("joy", "😂"),
         ("wink", "😉"), ("blush", "😊"), ("heart", "❤️"), ("love", "❤️"), ("kiss", "😘"),
         ("tongue", "😛"), ("crazy", "😜"), ("wink2", "😜"), ("cool", "😎"), ("sunglasses", "😎"),
@@ -1094,7 +1104,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("wow", "😮"), ("surprise", "😮"), ("scream", "😱"), ("fear", "😱"), ("cry", "😢"),
         ("sad", "😢"), ("tear", "😢"), ("angry", "😠"), ("mad", "😠"), ("rage", "😡"),
         
-        // People & Body
         ("thumbsup", "👍"), ("like", "👍"), ("ok", "👌"), ("clap", "👏"), ("pray", "🙏"),
         ("thanks", "🙏"), ("wave", "👋"), ("hi", "👋"), ("muscle", "💪"), ("strong", "💪"),
         ("point", "👉"), ("finger", "👉"), ("eyes", "👀"), ("see", "👀"), ("ear", "👂"),
@@ -1102,7 +1111,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("child", "👦"), ("boy", "👦"), ("girl", "👧"), ("man", "👨"), ("woman", "👩"),
         ("beard", "🧔"), ("blonde", "👱"), ("redhead", "👨‍🦰"), ("curly", "👨‍🦱"), ("bald", "👨‍🦲"),
         
-        // Animals & Nature
         ("monkey", "🐵"), ("dog", "🐶"), ("puppy", "🐶"), ("cat", "🐱"), ("kitten", "🐱"),
         ("lion", "🦁"), ("tiger", "🐯"), ("horse", "🐴"), ("unicorn", "🦄"), ("cow", "🐮"),
         ("pig", "🐷"), ("frog", "🐸"), ("mouse", "🐭"), ("hamster", "🐹"), ("rabbit", "🐰"),
@@ -1116,7 +1124,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("flower", "🌸"), ("rose", "🌹"), ("sunflower", "🌻"), ("tree", "🌳"), ("palm", "🌴"),
         ("cactus", "🌵"), ("sheaf", "🌾"), ("shamrock", "☘️"), ("maple", "🍁"), ("leaf", "🍃"),
         
-        // Food & Drink
         ("grape", "🍇"), ("melon", "🍈"), ("watermelon", "🍉"), ("orange", "🍊"), ("lemon", "🍋"),
         ("banana", "🍌"), ("pineapple", "🍍"), ("apple", "🍎"), ("greenapple", "🍏"), ("pear", "🍐"),
         ("peach", "🍑"), ("cherry", "🍒"), ("strawberry", "🍓"), ("kiwi", "🥝"), ("tomato", "🍅"),
@@ -1134,7 +1141,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("champagne", "🍾"), ("wine", "🍷"), ("cocktail", "🍸"), ("tropicaldrink", "🍹"), ("beer", "🍺"),
         ("beers", "🍻"), ("clinking", "🥂"), ("tumbler", "🥃"), ("cup", "🥤"), ("chopsticks", "🥢"),
         
-        // Activities & Sports
         ("soccer", "⚽"), ("basketball", "🏀"), ("football", "🏈"), ("baseball", "⚾"), ("tennis", "🎾"),
         ("volleyball", "🏐"), ("rugby", "🏉"), ("pool", "🎱"), ("pingpong", "🏓"), ("badminton", "🏸"),
         ("hockey", "🏒"), ("fieldhockey", "🏑"), ("cricket", "🏏"), ("goal", "🥅"), ("dart", "🎯"),
@@ -1146,7 +1152,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("piano", "🎹"), ("trumpet", "🎺"), ("violin", "🎻"), ("drum", "🥁"), ("game", "🎮"),
         ("joystick", "🕹️"), ("slot", "🎰"), ("dice", "🎲"), ("chess", "♟️"), ("puzzle", "🧩"),
         
-        // Travel & Places
         ("car", "🚗"), ("taxi", "🚕"), ("jeep", "🚙"), ("bus", "🚌"), ("trolley", "🚎"),
         ("racing", "🏎️"), ("policecar", "🚓"), ("ambulance", "🚑"), ("fireengine", "🚒"), ("minibus", "🚐"),
         ("truck", "🚚"), ("delivery", "🚚"), ("articulated", "🚛"), ("tractor", "🚜"), ("scooter", "🛴"),
@@ -1168,7 +1173,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("bridge", "🌉"), ("carousel", "🎠"), ("ferris", "🎡"), ("rollercoaster", "🎢"), ("barber", "💈"),
         ("circus", "🎪"),
         
-        // Objects
         ("watch", "⌚"), ("iphone", "📱"), ("phone", "📱"), ("calling", "📲"), ("computer", "💻"),
         ("keyboard", "⌨️"), ("desktop", "🖥️"), ("printer", "🖨️"), ("mouse", "🖱️"), ("trackball", "🖲️"),
         ("joystick", "🕹️"), ("gamepad", "🎮"), ("lightbulb", "💡"), ("battery", "🔋"), ("electric", "🧯"),
@@ -1183,7 +1187,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         ("basket", "🧺"), ("roll", "🧻"), ("soap", "🧼"), ("sponge", "🧽"), ("fire", "🔥"),
         ("bomb", "💣"), ("smoking", "🚬"), ("coffin", "⚰️"), ("urn", "⚱️"), ("clown", "🤡"),
         
-        // Symbols
         ("check", "✅"), ("mark", "✅"), ("cross", "❌"), ("wrong", "❌"), ("question", "❓"),
         ("exclamation", "❗"), ("warning", "⚠️"), ("info", "ℹ️"), ("plus", "➕"), ("minus", "➖"),
         ("divide", "➗"), ("equals", "🟰"), ("infinity", "♾️"), ("recycle", "♻️"), ("fleur", "⚜️"),
@@ -1210,7 +1213,7 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         .take(3)
         .collect();
     
-        let crate_results: Vec<(String, String)> = emojis::iter()  // This uses the crate directly
+        let crate_results: Vec<(String, String)> = emojis::iter()
         .filter_map(|emoji| {
             if emoji.name().to_lowercase().contains(&query_lower) {
                 Some((emoji.name().to_string(), emoji.as_str().to_string()))
@@ -1221,7 +1224,6 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
         .take(2)
         .collect();
     
-    // Combine results, removing duplicates
     let mut combined = alias_results;
     for result in crate_results {
         if !combined.iter().any(|(_, emoji)| emoji == &result.1) {
@@ -1236,13 +1238,11 @@ fn search_emojis(query: &str) -> Vec<(String, String)> {
 fn looks_like_url(text: &str) -> bool {
     let text = text.trim();
     
-    // Common URL patterns
     if text.contains("://") {
         return text.starts_with("http://") || text.starts_with("https://") || 
                text.starts_with("ftp://") || text.starts_with("file://");
     }
     
-    // Domain-like patterns with optional paths
     if text.contains('.') && !text.contains(' ') {
         let domain_part = if text.contains('/') {
             text.split('/').next().unwrap_or("")
@@ -1324,6 +1324,13 @@ fn launch_app(desktop_id: &str) {
     let _ = Command::new("gtk-launch").arg(desktop_id).spawn();
 }
 
+fn launch_flatpak_app(flatpak_id: &str) {
+    let _ = Command::new("flatpak")
+        .arg("run")
+        .arg(flatpak_id)
+        .spawn();
+}
+
 fn scan_desktop_apps() -> Vec<AppEntry> {
     let mut apps = Vec::new();
     let home = std::env::var("HOME").unwrap();
@@ -1343,13 +1350,11 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                             if line.starts_with("Name=") {
                                 name = Some(line["Name=".len()..].to_string());
                             } else if line.starts_with("Exec=") {
-                                // Extract the command, removing flags and % arguments
                                 let exec_line = &line["Exec=".len()..];
                                 let command = extract_command_from_exec(exec_line);
                                 exec = Some(command);
                             }
                             
-                            // Stop if we have both name and exec
                             if name.is_some() && exec.is_some() {
                                 break;
                             }
@@ -1360,7 +1365,7 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                                 apps.push(AppEntry {
                                     name: app_name,
                                     desktop_id: file_stem.to_string(),
-                                    exec_command,  // Store the command
+                                    exec_command,
                                     match_indices: Vec::new(),
                                 });
                             }
@@ -1376,9 +1381,40 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
     apps
 }
 
-// Helper function to extract clean command from Exec line
+fn scan_flatpak_apps() -> Vec<FlatpakAppEntry> {
+    let mut flatpak_apps = Vec::new();
+    
+    let output = Command::new("flatpak")
+        .args(["list", "--app", "--columns=name,application,description"])
+        .output();
+    
+    match output {
+        Ok(output) if output.status.success() => {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            
+            for line in output_str.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 3 {
+                    let name = parts[0].to_string();
+                    let flatpak_id = parts[1].to_string();
+                    let description = parts[2].to_string();
+                    
+                    flatpak_apps.push(FlatpakAppEntry {
+                        name,
+                        flatpak_id,
+                        description,
+                        match_indices: Vec::new(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+    
+    flatpak_apps
+}
+
 fn extract_command_from_exec(exec_line: &str) -> String {
-    // Remove common desktop file flags and arguments
     let cleaned = exec_line
         .split_whitespace()
         .find(|part| {
@@ -1390,7 +1426,6 @@ fn extract_command_from_exec(exec_line: &str) -> String {
         .unwrap_or(exec_line)
         .to_string();
     
-    // Remove any remaining % arguments
     cleaned.split('%').next().unwrap_or(&cleaned).to_string()
 }
 
@@ -1473,7 +1508,6 @@ border_radius=0
 fn get_monitor_center() -> Option<(f32, f32)> {
     let mouse_position = get_mouse_position()?;
     
-    // Try multiple methods to get monitor info
     if let Some(center) = get_monitor_center_xrandr(mouse_position) {
         return Some(center);
     }
@@ -1482,7 +1516,6 @@ fn get_monitor_center() -> Option<(f32, f32)> {
         return Some(center);
     }
     
-    // Fallback: Use the monitor that contains the mouse based on common setups
     get_monitor_center_fallback(mouse_position)
 }
 
@@ -1496,13 +1529,10 @@ fn get_monitor_center_xrandr(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
     
     for line in output_str.lines() {
         if line.contains(" connected ") && line.contains("+") {
-            // Parse lines like: "eDP-1 connected primary 1920x1080+0+0"
             let parts: Vec<&str> = line.split_whitespace().collect();
             
-            // Find the part that contains the geometry (resolution+position)
             for part in &parts {
                 if part.contains('+') && part.contains('x') {
-                    // Geometry format: "1920x1080+0+0" or "1920x1080+1920+0" etc.
                     if let Some(plus_pos) = part.find('+') {
                         let resolution = &part[..plus_pos];
                         let position = &part[plus_pos + 1..];
@@ -1517,7 +1547,6 @@ fn get_monitor_center_xrandr(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
                                 pos_parts[0].parse::<f32>(),
                                 pos_parts[1].parse::<f32>()
                             ) {
-                                // Check if mouse is within this monitor
                                 if mouse_position.0 >= monitor_x && 
                                    mouse_position.0 < monitor_x + width &&
                                    mouse_position.1 >= monitor_y && 
@@ -1536,7 +1565,6 @@ fn get_monitor_center_xrandr(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
 }
 
 fn get_monitor_center_xinerama(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
-    // Try using xwininfo which is more reliable for multi-monitor setups
     let output = std::process::Command::new("xwininfo")
         .arg("-root")
         .arg("-tree")
@@ -1545,8 +1573,6 @@ fn get_monitor_center_xinerama(mouse_position: (f32, f32)) -> Option<(f32, f32)>
     
     let output_str = String::from_utf8(output.stdout).ok()?;
     
-    // This is a simpler approach - just get the root window dimensions
-    // For multi-monitor, this will give us the combined dimensions
     let root_output = std::process::Command::new("xwininfo")
         .arg("-root")
         .output()
@@ -1570,9 +1596,6 @@ fn get_monitor_center_xinerama(mouse_position: (f32, f32)) -> Option<(f32, f32)>
     }
     
     if width > 0.0 && height > 0.0 {
-        // For multi-monitor setups, we need a better approach
-        // Let's assume the mouse is in the primary monitor area
-        // This is a simplified approach
         Some((width / 2.0, height / 2.0))
     } else {
         None
@@ -1580,15 +1603,14 @@ fn get_monitor_center_xinerama(mouse_position: (f32, f32)) -> Option<(f32, f32)>
 }
 
 fn get_monitor_center_fallback(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
-    // Get display dimensions using xdpyinfo
     let output = std::process::Command::new("xdpyinfo")
         .output()
         .ok()?;
     
     let output_str = String::from_utf8(output.stdout).ok()?;
     
-    let mut screen_width = 1920.0; // default fallback
-    let mut screen_height = 1080.0; // default fallback
+    let mut screen_width = 1920.0;
+    let mut screen_height = 1080.0;
     
     for line in output_str.lines() {
         if line.contains("dimensions:") {
@@ -1605,25 +1627,19 @@ fn get_monitor_center_fallback(mouse_position: (f32, f32)) -> Option<(f32, f32)>
         }
     }
     
-    // Simple heuristic for multi-monitor:
-    // If mouse is in the left half, assume left monitor; right half, right monitor
-    if screen_width > 2000.0 { // Likely dual monitor
+    if screen_width > 2000.0 {
         let monitor_width = screen_width / 2.0;
         if mouse_position.0 < monitor_width {
-            // Left monitor
             Some((monitor_width / 2.0, screen_height / 2.0))
         } else {
-            // Right monitor
             Some((monitor_width + monitor_width / 2.0, screen_height / 2.0))
         }
     } else {
-        // Single monitor
         Some((screen_width / 2.0, screen_height / 2.0))
     }
 }
 
 fn get_mouse_position() -> Option<(f32, f32)> {
-    // Use xdotool to get mouse position
     let output = std::process::Command::new("xdotool")
         .arg("getmouselocation")
         .output()
@@ -1658,15 +1674,13 @@ fn main() -> eframe::Result<()> {
     };
 
     let window_width = 600.0;
-    let initial_height = 50.0; // Initial height for search box only
+    let initial_height = 50.0;
     
-    // Get the center position of the monitor where the mouse is
     let position = if let Some((center_x, center_y)) = get_monitor_center() {
         println!("Positioning window at: ({}, {})", center_x - window_width / 2.0, center_y - initial_height / 2.0);
         egui::pos2(center_x - window_width / 2.0, center_y - initial_height / 2.0)
     } else {
         eprintln!("Failed to get monitor center, using default position");
-        // Center on primary monitor as fallback
         egui::pos2(100.0, 100.0)
     };
 
