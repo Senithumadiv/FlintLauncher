@@ -9,6 +9,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
+use std::env;
 
 struct Theme {
     background: String,
@@ -20,6 +21,9 @@ struct Theme {
     border_radius: f32,
     font_family: String,
     highlight_color: String,
+    enable_icons: bool,
+    icon_theme: String,
+    icon_size: f32,
 }
 
 impl Default for Theme {
@@ -34,6 +38,9 @@ impl Default for Theme {
             border_radius: 0.0,
             font_family: "System".to_string(),
             highlight_color: "#007aff".to_string(),
+            enable_icons: true,
+            icon_theme: "Papirus".to_string(),
+            icon_size: 24.0,
         }
     }
 }
@@ -75,6 +82,13 @@ impl Theme {
                             }
                         }
                         "font_family" => theme.font_family = value.to_string(),
+                        "enable_icons" => theme.enable_icons = value == "true" || value == "1",
+                        "icon_theme" => theme.icon_theme = value.to_string(),
+                        "icon_size" => {
+                            if let Ok(size) = value.parse() {
+                                theme.icon_size = size;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -118,6 +132,7 @@ struct AppEntry {
     desktop_id: String,
     exec_command: String,
     match_indices: Vec<usize>,
+    icon_path: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -126,6 +141,7 @@ struct FlatpakAppEntry {
     flatpak_id: String,
     description: String,
     match_indices: Vec<usize>,
+    icon_path: Option<PathBuf>,
 }
 
 struct AnimationState {
@@ -352,25 +368,27 @@ impl eframe::App for FlintApp {
                 ui.add_space(5.0);
                 ui.add_space(5.0);
                 
+                // Full opacity for text to ensure visibility
                 let search_text_color = egui::Color32::from_rgba_premultiplied(
-                    (text_rgb[0] * 255.0 * window_alpha) as u8,
-                    (text_rgb[1] * 255.0 * window_alpha) as u8,
-                    (text_rgb[2] * 255.0 * window_alpha) as u8,
-                    (window_alpha * 255.0) as u8,
+                    (text_rgb[0] * 255.0) as u8,
+                    (text_rgb[1] * 255.0) as u8,
+                    (text_rgb[2] * 255.0) as u8,
+                    255,
                 );
                 
                 ui.horizontal(|ui| {
                     ui.add_space(15.0);
                     
-                    let response = ui.add_sized(
-                        [window_width - 30.0, 30.0],
-                        egui::TextEdit::singleline(&mut self.query)
-                            .hint_text("Search...")
-                            .frame(false)
-                            .text_color(search_text_color)
-                            .font(egui::FontId::proportional(20.0))
-                            .id(egui::Id::new("search_field"))
-                    );
+                    let text_edit = egui::TextEdit::singleline(&mut self.query)
+                        .hint_text("Search...")
+                        .frame(false)
+                        .text_color(search_text_color)
+                        .font(egui::FontId::proportional(20.0))
+                        .id(egui::Id::new("search_field"))
+                        .desired_width(window_width - 30.0)
+                        .min_size(egui::vec2(window_width - 30.0, 30.0));
+
+                    let response = ui.add(text_edit);
 
                     if !self.has_focused {
                         ui.ctx().memory_mut(|mem| mem.request_focus(response.id));
@@ -461,148 +479,148 @@ impl eframe::App for FlintApp {
                     }
                 }
 
-self.results.clear();
+                self.results.clear();
 
-if !self.query.is_empty() {
-    if self.query.starts_with("file:") {
-        let file_query = &self.query[5..].trim();
-        if !file_query.is_empty() {
-            let file_results = search_files(file_query);
-            for path in file_results {
-                self.results.push(ResultType::File(path));
-            }
-        } else {
-            self.results.push(ResultType::Command("Search files...".to_string()));
-        }
-    }
-    else if self.query.starts_with("e:") {
-        let emoji_query = &self.query[2..].trim();
-        if !emoji_query.is_empty() {
-            let emoji_results = search_emojis(emoji_query);
-            for (name, emoji) in emoji_results {
-                self.results.push(ResultType::Emoji(name, emoji));
-            }
-        } else {
-            self.results.push(ResultType::Command("Search emojis...".to_string()));
-        }
-    }
-    else if let Some((from, to, result)) = self.runtime.block_on(convert_currency_online(&self.query)) {
-        self.results.push(ResultType::Currency(from, to, result));
-    }
-    else if looks_like_url(&self.query) {
-        let url = if self.query.contains("://") {
-            self.query.clone()
-        } else {
-            format!("https://{}", self.query)
-        };
-        self.results.push(ResultType::Url(url));
-    }
-    else if is_calculation(&self.query) {
-        let expr = self.query.trim();
-        if !expr.is_empty() {
-            match meval::eval_str(expr) {
-                Ok(result) => {
-                    self.results.push(ResultType::Calculator(result.to_string()));
+                if !self.query.is_empty() {
+                    if self.query.to_lowercase().starts_with("file:") {
+                        let file_query = &self.query[5..].trim().to_lowercase();
+                        if !file_query.is_empty() {
+                            let file_results = search_files(file_query);
+                            for path in file_results {
+                                self.results.push(ResultType::File(path));
+                            }
+                        } else {
+                            self.results.push(ResultType::Command("Search files...".to_string()));
+                        }
+                    }
+                    else if self.query.to_lowercase().starts_with("e:") {
+                        let emoji_query = &self.query[2..].trim().to_lowercase();
+                        if !emoji_query.is_empty() {
+                            let emoji_results = search_emojis(emoji_query);
+                            for (name, emoji) in emoji_results {
+                                self.results.push(ResultType::Emoji(name, emoji));
+                            }
+                        } else {
+                            self.results.push(ResultType::Command("Search emojis...".to_string()));
+                        }
+                    }
+                    else if let Some((from, to, result)) = self.runtime.block_on(convert_currency_online(&self.query)) {
+                        self.results.push(ResultType::Currency(from, to, result));
+                    }
+                    else if looks_like_url(&self.query) {
+                        let url = if self.query.contains("://") {
+                            self.query.clone()
+                        } else {
+                            format!("https://{}", self.query)
+                        };
+                        self.results.push(ResultType::Url(url));
+                    }
+                    else if is_calculation(&self.query) {
+                        let expr = self.query.trim();
+                        if !expr.is_empty() {
+                            match meval::eval_str(expr) {
+                                Ok(result) => {
+                                    self.results.push(ResultType::Calculator(result.to_string()));
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                    }
+                    else if self.query.starts_with('$') {
+                        let cmd = &self.query[1..].trim();
+                        if !cmd.is_empty() {
+                            self.results.push(ResultType::Command(cmd.to_string()));
+                        } else {
+                            self.results.push(ResultType::Command("Enter shell command...".to_string()));
+                        }
+                    }
+                    else if self.query.starts_with('@') {
+                        let search = &self.query[1..].trim();
+                        if !search.is_empty() {
+                            self.results.push(ResultType::WebSearch(search.to_string()));
+                        } else {
+                            self.results.push(ResultType::Command("Search the web...".to_string()));
+                        }
+                    }
+                    
+                    if self.results.is_empty() {
+                        let matcher = SkimMatcherV2::default();
+                        let query = self.query.to_lowercase();
+                        
+                        let mut scored_results: Vec<(i64, AppEntry)> = self
+                            .items
+                            .par_iter()
+                            .filter_map(|app| {
+                                if let Some((score, indices)) = matcher.fuzzy_indices(&app.name.to_lowercase(), &query) {
+                                    let mut app_with_match = app.clone();
+                                    app_with_match.match_indices = indices;
+                                    return Some((score + 100, app_with_match));
+                                }
+                                
+                                if let Some((score, _)) = matcher.fuzzy_indices(&app.exec_command, &query) {
+                                    let mut app_with_match = app.clone();
+                                    app_with_match.match_indices = Vec::new();
+                                    return Some((score, app_with_match));
+                                }
+                                
+                                None
+                            })
+                            .collect();
+                        
+                        let mut flatpak_scored_results: Vec<(i64, FlatpakAppEntry)> = self
+                            .flatpak_items
+                            .par_iter()
+                            .filter_map(|app| {
+                                if let Some((score, indices)) = matcher.fuzzy_indices(&app.name.to_lowercase(), &query) {
+                                    let mut app_with_match = app.clone();
+                                    app_with_match.match_indices = indices;
+                                    return Some((score + 50, app_with_match));
+                                }
+                                
+                                if let Some((score, _)) = matcher.fuzzy_indices(&app.description.to_lowercase(), &query) {
+                                    let mut app_with_match = app.clone();
+                                    app_with_match.match_indices = Vec::new();
+                                    return Some((score - 20, app_with_match));
+                                }
+                                
+                                if let Some((score, _)) = matcher.fuzzy_indices(&app.flatpak_id.to_lowercase(), &query) {
+                                    let mut app_with_match = app.clone();
+                                    app_with_match.match_indices = Vec::new();
+                                    return Some((score, app_with_match));
+                                }
+                                
+                                None
+                            })
+                            .collect();
+                        
+                        scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+                        flatpak_scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+                        
+                        let mut all_results: Vec<(i64, ResultType)> = Vec::new();
+                        
+                        for (score, app) in scored_results {
+                            all_results.push((score, ResultType::App(app)));
+                        }
+                        
+                        for (score, app) in flatpak_scored_results {
+                            all_results.push((score, ResultType::Flatpak(app)));
+                        }
+                        
+                        all_results.sort_by(|a, b| b.0.cmp(&a.0));
+                        
+                        for (_, result) in all_results.into_iter().take(max_visible_results) {
+                            self.results.push(result);
+                        }
+                        
+                        if self.results.is_empty() {
+                            self.results.push(ResultType::WebSearch(query));
+                        }
+                    }
+                    
+                    if self.selected >= self.results.len() && !self.results.is_empty() {
+                        self.selected = 0;
+                    }
                 }
-                Err(_) => {}
-            }
-        }
-    }
-    else if self.query.starts_with('$') {
-        let cmd = &self.query[1..].trim();
-        if !cmd.is_empty() {
-            self.results.push(ResultType::Command(cmd.to_string()));
-        } else {
-            self.results.push(ResultType::Command("Enter shell command...".to_string()));
-        }
-    }
-    else if self.query.starts_with('@') {
-        let search = &self.query[1..].trim();
-        if !search.is_empty() {
-            self.results.push(ResultType::WebSearch(search.to_string()));
-        } else {
-            self.results.push(ResultType::Command("Search the web...".to_string()));
-        }
-    }
-    
-if self.results.is_empty() {
-    let matcher = SkimMatcherV2::default();
-    let query = self.query.clone();
-    
-    let mut scored_results: Vec<(i64, AppEntry)> = self
-        .items
-        .par_iter()
-        .filter_map(|app| {
-            if let Some((score, indices)) = matcher.fuzzy_indices(&app.name, &query) {
-                let mut app_with_match = app.clone();
-                app_with_match.match_indices = indices;
-                return Some((score + 100, app_with_match));
-            }
-            
-            if let Some((score, _)) = matcher.fuzzy_indices(&app.exec_command, &query) {
-                let mut app_with_match = app.clone();
-                app_with_match.match_indices = Vec::new();
-                return Some((score, app_with_match));
-            }
-            
-            None
-        })
-        .collect();
-    
-    let mut flatpak_scored_results: Vec<(i64, FlatpakAppEntry)> = self
-        .flatpak_items
-        .par_iter()
-        .filter_map(|app| {
-            if let Some((score, indices)) = matcher.fuzzy_indices(&app.name, &query) {
-                let mut app_with_match = app.clone();
-                app_with_match.match_indices = indices;
-                return Some((score + 50, app_with_match));
-            }
-            
-            if let Some((score, _)) = matcher.fuzzy_indices(&app.description, &query) {
-                let mut app_with_match = app.clone();
-                app_with_match.match_indices = Vec::new();
-                return Some((score - 20, app_with_match));
-            }
-            
-            if let Some((score, _)) = matcher.fuzzy_indices(&app.flatpak_id, &query) {
-                let mut app_with_match = app.clone();
-                app_with_match.match_indices = Vec::new();
-                return Some((score, app_with_match));
-            }
-            
-            None
-        })
-        .collect();
-    
-    scored_results.sort_by(|a, b| b.0.cmp(&a.0));
-    flatpak_scored_results.sort_by(|a, b| b.0.cmp(&a.0));
-    
-    let mut all_results: Vec<(i64, ResultType)> = Vec::new();
-    
-    for (score, app) in scored_results {
-        all_results.push((score, ResultType::App(app)));
-    }
-    
-    for (score, app) in flatpak_scored_results {
-        all_results.push((score, ResultType::Flatpak(app)));
-    }
-    
-    all_results.sort_by(|a, b| b.0.cmp(&a.0));
-    
-    for (_, result) in all_results.into_iter().take(max_visible_results) {
-        self.results.push(result);
-    }
-    
-    if self.results.is_empty() {
-        self.results.push(ResultType::WebSearch(query));
-    }
-}
-    
-    if self.selected >= self.results.len() && !self.results.is_empty() {
-        self.selected = 0;
-    }
-}
 
                 if !self.results.is_empty() {
                     egui::ScrollArea::vertical()
@@ -643,6 +661,21 @@ if self.results.is_empty() {
                                     ui.horizontal(|ui| {
                                         match result {
                                             ResultType::App(app) => {
+                                                if self.theme.enable_icons {
+                                                    if let Some(ref icon_path) = app.icon_path {
+                                                        if let Ok(icon_data) = fs::read(icon_path) {
+                                                            if let Some(texture) = load_icon_texture(ctx, icon_path, &icon_data) {
+                                                                let icon_size = self.theme.icon_size;
+                                                                let texture_id = texture.clone();
+                                                                let image = egui::Image::new(&texture_id).fit_to_exact_size(egui::vec2(icon_size, icon_size));
+                                                                ui.add(image);
+                                                                ui.add_space(8.0);
+                                                            }
+                                                        }
+                                                    } else {
+                                                        ui.add_space(self.theme.icon_size + 8.0);
+                                                    }
+                                                }
                                                 render_highlighted_text(
                                                     ui,
                                                     &app.name,
@@ -653,6 +686,21 @@ if self.results.is_empty() {
                                                 );
                                             }
                                             ResultType::Flatpak(app) => {
+                                                if self.theme.enable_icons {
+                                                    if let Some(ref icon_path) = app.icon_path {
+                                                        if let Ok(icon_data) = fs::read(icon_path) {
+                                                            if let Some(texture) = load_icon_texture(ctx, icon_path, &icon_data) {
+                                                                let icon_size = self.theme.icon_size;
+                                                                let texture_id = texture.clone();
+                                                                let image = egui::Image::new(&texture_id).fit_to_exact_size(egui::vec2(icon_size, icon_size));
+                                                                ui.add(image);
+                                                                ui.add_space(8.0);
+                                                            }
+                                                        }
+                                                    } else {
+                                                        ui.add_space(self.theme.icon_size + 8.0);
+                                                    }
+                                                }
                                                 ui.label(
                                                     egui::RichText::new("Flatpak:")
                                                         .color(egui::Color32::from_rgba_premultiplied(
@@ -742,19 +790,19 @@ if self.results.is_empty() {
                                                         .size(self.theme.font_size)
                                                 );
                                             }
-ResultType::Emoji(name, emoji) => {
-    let color = if is_selected { sel_text_rgb } else { text_rgb };
-    ui.label(
-        egui::RichText::new(format!("{} :{}", emoji, name))
-            .color(egui::Color32::from_rgba_premultiplied(
-                (color[0] * 255.0 * item_alpha) as u8,
-                (color[1] * 255.0 * item_alpha) as u8,
-                (color[2] * 255.0 * item_alpha) as u8,
-                (item_alpha * 255.0) as u8,
-            ))
-            .size(self.theme.font_size)
-    );
-}
+                                            ResultType::Emoji(name, emoji) => {
+                                                let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                ui.label(
+                                                    egui::RichText::new(format!("{} :{}", emoji, name))
+                                                        .color(egui::Color32::from_rgba_premultiplied(
+                                                            (color[0] * 255.0 * item_alpha) as u8,
+                                                            (color[1] * 255.0 * item_alpha) as u8,
+                                                            (color[2] * 255.0 * item_alpha) as u8,
+                                                            (item_alpha * 255.0) as u8,
+                                                        ))
+                                                        .size(self.theme.font_size)
+                                                );
+                                            }
                                             ResultType::Currency(from, to, result) => {
                                                 let color = if is_selected { sel_text_rgb } else { text_rgb };
                                                 ui.label(
@@ -1016,6 +1064,21 @@ async fn convert_currency_online(query: &str) -> Option<(String, String, f64)> {
 }
 
 fn copy_to_clipboard(text: &str) {
+    // Try wl-copy first (Wayland)
+    if env::var("WAYLAND_DISPLAY").is_ok() {
+        let _ = Command::new("wl-copy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                if let Some(mut stdin) = child.stdin.take() {
+                    stdin.write_all(text.as_bytes())?;
+                }
+                child.wait()
+            });
+        return;
+    }
+    
+    // Fallback to xclip (X11)
     let _ = Command::new("xclip")
         .args(["-selection", "clipboard"])
         .stdin(std::process::Stdio::piped())
@@ -1073,7 +1136,7 @@ fn search_files(query: &str) -> Vec<PathBuf> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if file_name.to_lowercase().contains(&query_lower) {
+                    if file_name.to_lowercase().contains(&query_lower) || file_name.contains(&query_lower) {
                         results.push(path);
                         if results.len() >= 5 {
                             break;
@@ -1331,6 +1394,163 @@ fn launch_flatpak_app(flatpak_id: &str) {
         .spawn();
 }
 
+fn load_icon_texture(ctx: &egui::Context, path: &PathBuf, data: &[u8]) -> Option<egui::TextureHandle> {
+    let img = image::load_from_memory(data).ok()?;
+    let rgba = img.to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let pixels = rgba.into_raw();
+    
+    Some(ctx.load_texture(
+        format!("icon_{}", path.display()),
+        egui::ColorImage::from_rgba_unmultiplied(size, &pixels),
+        egui::TextureOptions::LINEAR,
+    ))
+}
+
+fn detect_icon_theme() -> Option<String> {
+    if let Ok(output) = Command::new("gsettings").args(["get", "org.gnome.desktop.interface", "icon-theme"]).output() {
+        if output.status.success() {
+            let theme = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !theme.is_empty() && theme != "\n" {
+                return Some(theme.replace('\'', "").replace('"', ""));
+            }
+        }
+    }
+    
+    if let Ok(output) = Command::new("xfconf-query").args(["-c", "xsettings", "-p", "/Net/IconThemeName"]).output() {
+        if output.status.success() {
+            let theme = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !theme.is_empty() {
+                return Some(theme);
+            }
+        }
+    }
+    
+    if let Some(home) = std::env::var("HOME").ok() {
+        let gtk3_path = format!("{}/.config/gtk-3.0/settings.ini", home);
+        if let Ok(content) = fs::read_to_string(&gtk3_path) {
+            for line in content.lines() {
+                if line.contains("gtk-icon-theme-name") {
+                    if let Some(theme) = line.split('=').nth(1) {
+                        return Some(theme.trim().to_string());
+                    }
+                }
+            }
+        }
+        
+        let gtk4_path = format!("{}/.config/gtk-4.0/settings.ini", home);
+        if let Ok(content) = fs::read_to_string(&gtk4_path) {
+            for line in content.lines() {
+                if line.contains("gtk-icon-theme-name") {
+                    if let Some(theme) = line.split('=').nth(1) {
+                        return Some(theme.trim().to_string());
+                    }
+                }
+            }
+        }
+        
+        let kdeglobals = format!("{}/.config/kdeglobals", home);
+        if let Ok(content) = fs::read_to_string(&kdeglobals) {
+            for line in content.lines() {
+                if line.contains("Theme=") && line.contains("Icons") {
+                    if let Some(theme) = line.split('=').nth(1) {
+                        return Some(theme.trim().to_string());
+                    }
+                }
+            }
+        }
+        
+        let xresources = format!("{}/.Xresources", home);
+        if let Ok(content) = fs::read_to_string(&xresources) {
+            for line in content.lines() {
+                if line.contains("*iconTheme") || line.contains("*.iconTheme") {
+                    if let Some(theme) = line.split(':').nth(1) {
+                        return Some(theme.trim().to_string());
+                    }
+                }
+            }
+        }
+        
+        let xsettings = format!("{}/.Xsettingsd", home);
+        if let Ok(content) = fs::read_to_string(&xsettings) {
+            for line in content.lines() {
+                if line.contains("Net/IconThemeName") || line.contains("\"Net/IconThemeName\"") {
+                    if let Some(theme) = line.split('"').nth(1) {
+                        if !theme.contains("IconThemeName") {
+                            return Some(theme.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+fn find_icon_path(icon_name: &str) -> Option<PathBuf> {
+    if icon_name.starts_with('/') {
+        let path = PathBuf::from(icon_name);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    
+    let home = std::env::var("HOME").ok();
+    let icon_sizes = vec!["128x128", "64x64", "48x48", "32x32", "24x24", "16x16", "scalable"];
+    
+    let icon_variants = vec![
+        icon_name.to_string(),
+        format!("{}.png", icon_name),
+        format!("{}.svg", icon_name),
+        format!("{}.xpm", icon_name),
+    ];
+    
+    let search_dirs: Vec<String> = vec![
+        "/usr/share/icons".to_string(),
+        "/usr/local/share/icons".to_string(),
+    ].into_iter().chain(home.clone().map(|h| format!("{}/.icons", h))).collect();
+    
+    let detected_theme = detect_icon_theme();
+    
+    let mut theme_dirs: Vec<String> = Vec::new();
+    if let Some(ref theme) = detected_theme {
+        theme_dirs.push(theme.clone());
+    }
+    theme_dirs.push("hicolor".to_string());
+    
+    for search_dir in &search_dirs {
+        if !PathBuf::from(search_dir).exists() {
+            continue;
+        }
+        
+        for variant in &icon_variants {
+            for size in &icon_sizes {
+                for theme in &theme_dirs {
+                    let icon_path = PathBuf::from(search_dir)
+                        .join(theme)
+                        .join(size)
+                        .join("apps")
+                        .join(variant);
+                    if icon_path.exists() {
+                        return Some(icon_path);
+                    }
+                }
+            }
+            
+            let direct_path = PathBuf::from(search_dir).join(variant);
+            if direct_path.exists() && direct_path.is_dir() {
+                continue;
+            }
+            if direct_path.exists() {
+                return Some(direct_path);
+            }
+        }
+    }
+    
+    None
+}
+
 fn scan_desktop_apps() -> Vec<AppEntry> {
     let mut apps = Vec::new();
     let home = std::env::var("HOME").unwrap();
@@ -1345,6 +1565,7 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                     if let Ok(content) = fs::read_to_string(&path) {
                         let mut name = None;
                         let mut exec = None;
+                        let mut icon = None;
                         
                         for line in content.lines() {
                             if line.starts_with("Name=") {
@@ -1353,6 +1574,8 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                                 let exec_line = &line["Exec=".len()..];
                                 let command = extract_command_from_exec(exec_line);
                                 exec = Some(command);
+                            } else if line.starts_with("Icon=") {
+                                icon = Some(line["Icon=".len()..].to_string());
                             }
                             
                             if name.is_some() && exec.is_some() {
@@ -1362,11 +1585,13 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                         
                         if let (Some(app_name), Some(exec_command)) = (name, exec) {
                             if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                let icon_path = icon.and_then(|i| find_icon_path(&i));
                                 apps.push(AppEntry {
                                     name: app_name,
                                     desktop_id: file_stem.to_string(),
                                     exec_command,
                                     match_indices: Vec::new(),
+                                    icon_path,
                                 });
                             }
                         }
@@ -1398,12 +1623,14 @@ fn scan_flatpak_apps() -> Vec<FlatpakAppEntry> {
                     let name = parts[0].to_string();
                     let flatpak_id = parts[1].to_string();
                     let description = parts[2].to_string();
+                    let icon_path = find_icon_path(&flatpak_id);
                     
                     flatpak_apps.push(FlatpakAppEntry {
                         name,
                         flatpak_id,
                         description,
                         match_indices: Vec::new(),
+                        icon_path,
                     });
                 }
             }
@@ -1435,7 +1662,22 @@ fn apply_theme(ctx: &egui::Context, theme: &Theme) {
     visuals.window_fill = egui::Color32::TRANSPARENT;
     visuals.panel_fill = egui::Color32::TRANSPARENT;
     
+    // Improve text rendering on Wayland
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    
     ctx.set_visuals(visuals);
+    
+    // Set default font size for better scaling
+    let mut style = (*ctx.style()).clone();
+    style.text_styles.insert(
+        egui::TextStyle::Body,
+        egui::FontId::proportional(theme.font_size),
+    );
+    style.text_styles.insert(
+        egui::TextStyle::Button,
+        egui::FontId::proportional(theme.font_size),
+    );
+    ctx.set_style(style);
     
     if theme.font_family != "System" {
         let home = std::env::var("HOME").unwrap();
@@ -1497,6 +1739,11 @@ font_family=System
 
 # Border radius (0 = square corners, higher = more rounded)
 border_radius=0
+
+# Icon settings
+enable_icons=true
+icon_theme=Papirus
+icon_size=24
 "#;
     
     if let Some(parent) = theme_path.parent() {
@@ -1506,6 +1753,14 @@ border_radius=0
 }
 
 fn get_monitor_center() -> Option<(f32, f32)> {
+    // Try Wayland first
+    if env::var("WAYLAND_DISPLAY").is_ok() {
+        if let Some(center) = get_monitor_center_wayland() {
+            return Some(center);
+        }
+    }
+    
+    // Fallback to X11 methods
     let mouse_position = get_mouse_position()?;
     
     if let Some(center) = get_monitor_center_xrandr(mouse_position) {
@@ -1517,6 +1772,48 @@ fn get_monitor_center() -> Option<(f32, f32)> {
     }
     
     get_monitor_center_fallback(mouse_position)
+}
+
+fn get_monitor_center_wayland() -> Option<(f32, f32)> {
+    // For Wayland, we need to use different methods
+    // Try to get display info from environment
+    
+    // Option 1: Use wlr-randr (for wlroots-based compositors)
+    if let Ok(output) = Command::new("wlr-randr").output() {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Parse wlr-randr output for current monitor
+            for line in stdout.lines() {
+                if line.contains("current") && line.contains("x") {
+                    if let Some(dim_part) = line.split(',').next() {
+                        let dims: Vec<&str> = dim_part.split_whitespace().collect();
+                        for dim in dims {
+                            if dim.contains('x') {
+                                let res: Vec<&str> = dim.split('x').collect();
+                                if res.len() == 2 {
+                                    if let (Ok(w), Ok(h)) = (res[0].parse::<f32>(), res[1].parse::<f32>()) {
+                                        return Some((w / 2.0, h / 2.0));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Option 2: Try to get display info from environment
+    if let Ok(width) = env::var("WAYLAND_DISPLAY_WIDTH") {
+        if let Ok(height) = env::var("WAYLAND_DISPLAY_HEIGHT") {
+            if let (Ok(w), Ok(h)) = (width.parse::<f32>(), height.parse::<f32>()) {
+                return Some((w / 2.0, h / 2.0));
+            }
+        }
+    }
+    
+    // Default fallback
+    Some((960.0, 540.0))
 }
 
 fn get_monitor_center_xrandr(mouse_position: (f32, f32)) -> Option<(f32, f32)> {
@@ -1640,6 +1937,14 @@ fn get_monitor_center_fallback(mouse_position: (f32, f32)) -> Option<(f32, f32)>
 }
 
 fn get_mouse_position() -> Option<(f32, f32)> {
+    // Try Wayland first
+    if env::var("WAYLAND_DISPLAY").is_ok() {
+        if let Some(pos) = get_mouse_position_wayland() {
+            return Some(pos);
+        }
+    }
+    
+    // Fallback to xdotool (X11)
     let output = std::process::Command::new("xdotool")
         .arg("getmouselocation")
         .output()
@@ -1664,6 +1969,23 @@ fn get_mouse_position() -> Option<(f32, f32)> {
     }
 }
 
+fn get_mouse_position_wayland() -> Option<(f32, f32)> {
+    // Try to get mouse position using slurp or other Wayland tools
+    if let Ok(output) = Command::new("slurp").arg("-p").output() {
+        if output.status.success() {
+            let pos_str = String::from_utf8_lossy(&output.stdout);
+            let coords: Vec<&str> = pos_str.trim().split(',').collect();
+            if coords.len() >= 2 {
+                if let (Ok(x), Ok(y)) = (coords[0].parse::<f32>(), coords[1].parse::<f32>()) {
+                    return Some((x, y));
+                }
+            }
+        }
+    }
+    
+    None
+}
+
 fn main() -> eframe::Result<()> {
     let app = match FlintApp::new() {
         Ok(app) => app,
@@ -1676,6 +1998,24 @@ fn main() -> eframe::Result<()> {
     let window_width = 600.0;
     let initial_height = 50.0;
     
+    // Check if running under Wayland
+    let is_wayland = env::var("WAYLAND_DISPLAY").is_ok();
+    
+    // Get DPI/scale factor
+    let scale_factor = if is_wayland {
+        // Try to get Wayland scale
+        if let Ok(scale) = env::var("GDK_SCALE") {
+            scale.parse::<f32>().unwrap_or(1.0)
+        } else if let Ok(scale) = env::var("QT_SCALE_FACTOR") {
+            scale.parse::<f32>().unwrap_or(1.0)
+        } else {
+            // Default to 1.0
+            1.0
+        }
+    } else {
+        1.0
+    };
+
     let position = if let Some((center_x, center_y)) = get_monitor_center() {
         println!("Positioning window at: ({}, {})", center_x - window_width / 2.0, center_y - initial_height / 2.0);
         egui::pos2(center_x - window_width / 2.0, center_y - initial_height / 2.0)
@@ -1684,16 +2024,25 @@ fn main() -> eframe::Result<()> {
         egui::pos2(100.0, 100.0)
     };
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([window_width, initial_height])
+        .with_decorations(false)
+        .with_always_on_top()
+        .with_resizable(false)
+        .with_window_level(egui::WindowLevel::AlwaysOnTop)
+        .with_taskbar(false)
+        .with_position(position)
+        .with_transparent(true);
+
+    // Wayland-specific settings - use compatible methods
+    if is_wayland {
+        // For older eframe versions, we handle scaling differently
+        // Just set the app_id for Wayland compositors
+        viewport = viewport.with_app_id("flint".to_string());
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([window_width, initial_height])
-            .with_decorations(false)
-            .with_always_on_top()
-            .with_resizable(false)
-            .with_window_level(egui::WindowLevel::AlwaysOnTop)
-            .with_taskbar(false)
-            .with_position(position)
-            .with_transparent(true),
+        viewport,
         centered: false,
         ..Default::default()
     };
@@ -1702,6 +2051,10 @@ fn main() -> eframe::Result<()> {
         "Flint",
         options,
         Box::new(move |cc| {
+            // Set the scale factor for egui
+            if is_wayland {
+                cc.egui_ctx.set_pixels_per_point(scale_factor);
+            }
             apply_theme(&cc.egui_ctx, &app.theme);
             cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             Box::new(app)

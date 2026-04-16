@@ -19,3 +19,4 @@ urlencoding = "2.1"
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1.0", features = ["full"] }
 emojis = "0.8.0"
+image = "0.24"

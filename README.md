@@ -36,6 +36,7 @@
 - **Parallel Search** – Uses Rayon for smooth, non-blocking filtering
 - **Instant Search**: Start typing after `:` to see matching emojis
 - **Currency Exchange** Convert between 160+ currencies with live exchange rates.
+- **App Icons** Display icons for apps using icon themes (configurable)
 
 ## 🚀 Installation
 
@@ -126,6 +127,31 @@ highlight_color=#bf616a
 font_size=16
 font_family=JetBrainsMonoNerdFont-Regular
 ```
+
+### Icons
+You can customize app icons in `theme.conf`:
+
+```conf
+enable_icons=true
+icon_theme=Papirus
+icon_size=24
+```
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `enable_icons` | Enable/disable app icons | `true` |
+| `icon_size` | Size of icons in pixels | `24` |
+
+Flint automatically detects your icon theme from:
+- GNOME Settings (gsettings)
+- XFCE Settings (xfconf)
+- GTK3/GTK4 settings (~/.config/gtk-3.0/settings.ini, ~/.config/gtk-4.0/settings.ini)
+- KDE Plasma (~/.config/kdeglobals)
+- X Resources (~/.Xresources, ~/.Xsettingsd)
+- LXAppearance
+
+Place custom icon packs in `~/.icons/` or `/usr/share/icons/`.
+
 ### Catppuccin Macchiato
 ```conf
 background=#24273a
