@@ -17,7 +17,7 @@
 
 ## ✨ Features
 
-- **Lightning Fast** – Instant app searching and launching  
+- **Blazing Fast** – Optimized fuzzy search with pre-cached data  
 - **Fuzzy Search** – Find apps even with typos  
 - **Custom Themes** – Easily configurable colors, borders, and fonts via `theme.conf`  
 - **System Font Support** – Automatically detects installed fonts from common directories  
@@ -37,6 +37,29 @@
 - **Instant Search**: Start typing after `:` to see matching emojis
 - **Currency Exchange** Convert between 160+ currencies with live exchange rates.
 - **App Icons** Display icons for apps using icon themes (configurable)
+- **Fuzzy Aliases** Quick shortcuts for system actions (lock, shutdown, volume, etc.)
+
+## ⚡ Aliases
+
+Type these shortcuts for quick system actions:
+
+| Alias | Action | Command |
+|-------|--------|---------|
+| `lock` | Lock screen | `loginctl lock-session` |
+| `shutdown` / `off` | Shutdown | `systemctl poweroff` |
+| `reboot` / `restart` | Reboot | `systemctl reboot` |
+| `sleep` / `suspend` | Suspend | `systemctl suspend` |
+| `vol+` / `vol-` | Volume up/down | `wpctl set-volume` |
+| `mute` | Toggle mute | `wpctl set-mute` |
+| `ss` / `scrot` | Screenshot | `scrot` |
+| `htop` | System monitor | `gnome-system-monitor` |
+| `settings` | Open settings | `gnome-control-center` |
+| `kill` | Kill process | `pkill` |
+| `wifi` | Toggle WiFi | `rfkill toggle wifi` |
+| `bt` | Toggle Bluetooth | `rfkill toggle bluetooth` |
+| `calc` | Quick calculator | Built-in |
+| `emoji` / `em` | Emoji search | Built-in |
+| `file` / `find` | File search | Built-in |
 
 ## 🚀 Installation
 

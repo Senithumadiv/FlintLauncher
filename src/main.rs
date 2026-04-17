@@ -124,11 +124,158 @@ enum ResultType {
     Emoji(String, String),
     Currency(String, String, f64),
     Flatpak(FlatpakAppEntry),
+    Alias(String, String),
+}
+
+#[derive(Clone)]
+struct AliasEntry {
+    name: String,
+    name_lower: String,
+    aliases: Vec<String>,
+    aliases_lower: Vec<String>,
+    description: String,
+    command: String,
+}
+
+impl AliasEntry {
+    fn get_all() -> Vec<AliasEntry> {
+        vec![
+            AliasEntry {
+                name: "Calculator".to_string(),
+                name_lower: "calculator".to_string(),
+                aliases: vec!["calc".to_string(), "math".to_string()],
+                aliases_lower: vec!["calc".to_string(), "math".to_string()],
+                description: "Quick calculator".to_string(),
+                command: "CALC".to_string(),
+            },
+            AliasEntry {
+                name: "Lock Screen".to_string(),
+                name_lower: "lock screen".to_string(),
+                aliases: vec!["lock".to_string(), "l".to_string()],
+                aliases_lower: vec!["lock".to_string(), "l".to_string()],
+                description: "Lock your screen".to_string(),
+                command: "lock".to_string(),
+            },
+            AliasEntry {
+                name: "Shutdown".to_string(),
+                name_lower: "shutdown".to_string(),
+                aliases: vec!["poweroff".to_string(), "off".to_string(), "shutdown".to_string()],
+                aliases_lower: vec!["poweroff".to_string(), "off".to_string(), "shutdown".to_string()],
+                description: "Shutdown the system".to_string(),
+                command: "shutdown now".to_string(),
+            },
+            AliasEntry {
+                name: "Reboot".to_string(),
+                name_lower: "reboot".to_string(),
+                aliases: vec!["restart".to_string(), "reboot".to_string()],
+                aliases_lower: vec!["restart".to_string(), "reboot".to_string()],
+                description: "Reboot the system".to_string(),
+                command: "reboot".to_string(),
+            },
+            AliasEntry {
+                name: "Suspend".to_string(),
+                name_lower: "suspend".to_string(),
+                aliases: vec!["sleep".to_string(), "suspend".to_string()],
+                aliases_lower: vec!["sleep".to_string(), "suspend".to_string()],
+                description: "Suspend the system".to_string(),
+                command: "systemctl suspend".to_string(),
+            },
+            AliasEntry {
+                name: "Volume Up".to_string(),
+                name_lower: "volume up".to_string(),
+                aliases: vec!["vol+".to_string(), "volumeup".to_string()],
+                aliases_lower: vec!["vol+".to_string(), "volumeup".to_string()],
+                description: "Increase volume".to_string(),
+                command: "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+".to_string(),
+            },
+            AliasEntry {
+                name: "Volume Down".to_string(),
+                name_lower: "volume down".to_string(),
+                aliases: vec!["vol-".to_string(), "volumedown".to_string()],
+                aliases_lower: vec!["vol-".to_string(), "volumedown".to_string()],
+                description: "Decrease volume".to_string(),
+                command: "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-".to_string(),
+            },
+            AliasEntry {
+                name: "Mute".to_string(),
+                name_lower: "mute".to_string(),
+                aliases: vec!["mute".to_string(), "vol0".to_string()],
+                aliases_lower: vec!["mute".to_string(), "vol0".to_string()],
+                description: "Toggle mute".to_string(),
+                command: "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle".to_string(),
+            },
+            AliasEntry {
+                name: "Screenshot".to_string(),
+                name_lower: "screenshot".to_string(),
+                aliases: vec!["ss".to_string(), "screenshot".to_string(), "scrot".to_string()],
+                aliases_lower: vec!["ss".to_string(), "screenshot".to_string(), "scrot".to_string()],
+                description: "Take a screenshot".to_string(),
+                command: "scrot".to_string(),
+            },
+            AliasEntry {
+                name: "Killall".to_string(),
+                name_lower: "killall".to_string(),
+                aliases: vec!["kill".to_string(), "pkill".to_string()],
+                aliases_lower: vec!["kill".to_string(), "pkill".to_string()],
+                description: "Kill a process".to_string(),
+                command: "KILL".to_string(),
+            },
+            AliasEntry {
+                name: "WiFi Toggle".to_string(),
+                name_lower: "wifi toggle".to_string(),
+                aliases: vec!["wifi".to_string(), "wifi-off".to_string(), "wifi-on".to_string()],
+                aliases_lower: vec!["wifi".to_string(), "wifi-off".to_string(), "wifi-on".to_string()],
+                description: "Toggle WiFi".to_string(),
+                command: "WIFI".to_string(),
+            },
+            AliasEntry {
+                name: "Bluetooth Toggle".to_string(),
+                name_lower: "bluetooth toggle".to_string(),
+                aliases: vec!["bt".to_string(), "bluetooth".to_string()],
+                aliases_lower: vec!["bt".to_string(), "bluetooth".to_string()],
+                description: "Toggle Bluetooth".to_string(),
+                command: "BLUETOOTH".to_string(),
+            },
+            AliasEntry {
+                name: "Emoji".to_string(),
+                name_lower: "emoji".to_string(),
+                aliases: vec!["em".to_string(), "emoji".to_string()],
+                aliases_lower: vec!["em".to_string(), "emoji".to_string()],
+                description: "Search emojis".to_string(),
+                command: "EMOJI".to_string(),
+            },
+            AliasEntry {
+                name: "Files".to_string(),
+                name_lower: "files".to_string(),
+                aliases: vec!["file".to_string(), "find".to_string()],
+                aliases_lower: vec!["file".to_string(), "find".to_string()],
+                description: "Search files".to_string(),
+                command: "FILE".to_string(),
+            },
+            AliasEntry {
+                name: "System Monitor".to_string(),
+                name_lower: "system monitor".to_string(),
+                aliases: vec!["htop".to_string(), "monitor".to_string(), "proc".to_string()],
+                aliases_lower: vec!["htop".to_string(), "monitor".to_string(), "proc".to_string()],
+                description: "Open system monitor".to_string(),
+                command: "gnome-system-monitor".to_string(),
+            },
+            AliasEntry {
+                name: "Settings".to_string(),
+                name_lower: "settings".to_string(),
+                aliases: vec!["cfg".to_string(), "config".to_string(), "prefs".to_string()],
+                aliases_lower: vec!["cfg".to_string(), "config".to_string(), "prefs".to_string()],
+                description: "Open system settings".to_string(),
+                command: "gnome-control-center".to_string(),
+            },
+        ]
+    }
 }
 
 #[derive(Clone)]
 struct AppEntry {
     name: String,
+    name_lower: String,
     desktop_id: String,
     exec_command: String,
     match_indices: Vec<usize>,
@@ -138,8 +285,11 @@ struct AppEntry {
 #[derive(Clone)]
 struct FlatpakAppEntry {
     name: String,
+    name_lower: String,
     flatpak_id: String,
+    flatpak_id_lower: String,
     description: String,
+    description_lower: String,
     match_indices: Vec<usize>,
     icon_path: Option<PathBuf>,
 }
@@ -475,6 +625,10 @@ impl eframe::App for FlintApp {
                                 copy_to_clipboard(&result.to_string());
                                 self.should_close = true;
                             }
+                            ResultType::Alias(name, _) => {
+                                execute_alias(&name);
+                                self.should_close = true;
+                            }
                         }
                     }
                 }
@@ -546,12 +700,13 @@ impl eframe::App for FlintApp {
                     if self.results.is_empty() {
                         let matcher = SkimMatcherV2::default();
                         let query = self.query.to_lowercase();
+                        let max_results = 6;
                         
                         let mut scored_results: Vec<(i64, AppEntry)> = self
                             .items
                             .par_iter()
                             .filter_map(|app| {
-                                if let Some((score, indices)) = matcher.fuzzy_indices(&app.name.to_lowercase(), &query) {
+                                if let Some((score, indices)) = matcher.fuzzy_indices(&app.name_lower, &query) {
                                     let mut app_with_match = app.clone();
                                     app_with_match.match_indices = indices;
                                     return Some((score + 100, app_with_match));
@@ -567,23 +722,26 @@ impl eframe::App for FlintApp {
                             })
                             .collect();
                         
+                        scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+                        scored_results.truncate(max_results);
+                        
                         let mut flatpak_scored_results: Vec<(i64, FlatpakAppEntry)> = self
                             .flatpak_items
                             .par_iter()
                             .filter_map(|app| {
-                                if let Some((score, indices)) = matcher.fuzzy_indices(&app.name.to_lowercase(), &query) {
+                                if let Some((score, indices)) = matcher.fuzzy_indices(&app.name_lower, &query) {
                                     let mut app_with_match = app.clone();
                                     app_with_match.match_indices = indices;
                                     return Some((score + 50, app_with_match));
                                 }
                                 
-                                if let Some((score, _)) = matcher.fuzzy_indices(&app.description.to_lowercase(), &query) {
+                                if let Some((score, _)) = matcher.fuzzy_indices(&app.description_lower, &query) {
                                     let mut app_with_match = app.clone();
                                     app_with_match.match_indices = Vec::new();
                                     return Some((score - 20, app_with_match));
                                 }
                                 
-                                if let Some((score, _)) = matcher.fuzzy_indices(&app.flatpak_id.to_lowercase(), &query) {
+                                if let Some((score, _)) = matcher.fuzzy_indices(&app.flatpak_id_lower, &query) {
                                     let mut app_with_match = app.clone();
                                     app_with_match.match_indices = Vec::new();
                                     return Some((score, app_with_match));
@@ -593,10 +751,10 @@ impl eframe::App for FlintApp {
                             })
                             .collect();
                         
-                        scored_results.sort_by(|a, b| b.0.cmp(&a.0));
                         flatpak_scored_results.sort_by(|a, b| b.0.cmp(&a.0));
+                        flatpak_scored_results.truncate(2);
                         
-                        let mut all_results: Vec<(i64, ResultType)> = Vec::new();
+                        let mut all_results: Vec<(i64, ResultType)> = Vec::with_capacity(max_results + 5);
                         
                         for (score, app) in scored_results {
                             all_results.push((score, ResultType::App(app)));
@@ -607,6 +765,47 @@ impl eframe::App for FlintApp {
                         }
                         
                         all_results.sort_by(|a, b| b.0.cmp(&a.0));
+                        
+                        let aliases = AliasEntry::get_all();
+                        let mut alias_results: Vec<(i64, AliasEntry)> = aliases
+                            .into_iter()
+                            .filter_map(|alias| {
+                                let mut best_score: Option<i64> = None;
+                                let mut best_name = None;
+                                
+                                if let Some((score, _)) = matcher.fuzzy_indices(&alias.name_lower, &query) {
+                                    best_score = Some(score + 200);
+                                    best_name = Some(alias.name.clone());
+                                }
+                                
+                                for a in &alias.aliases_lower {
+                                    if let Some((score, _)) = matcher.fuzzy_indices(a, &query) {
+                                        let s = score + 250;
+                                        if best_score.map_or(true, |b| s > b) {
+                                            best_score = Some(s);
+                                            best_name = Some(alias.name.clone());
+                                        }
+                                    }
+                                }
+                                
+                                best_score.and_then(|score| {
+                                    best_name.map(|name| (score, AliasEntry {
+                                        name,
+                                        name_lower: alias.name_lower,
+                                        aliases: alias.aliases,
+                                        aliases_lower: alias.aliases_lower,
+                                        description: alias.description,
+                                        command: alias.command,
+                                    }))
+                                })
+                            })
+                            .collect();
+                        
+                        alias_results.sort_by(|a, b| b.0.cmp(&a.0));
+                        
+                        for (score, alias) in alias_results.into_iter().take(3) {
+                            all_results.push((score, ResultType::Alias(alias.name.clone(), alias.description.clone())));
+                        }
                         
                         for (_, result) in all_results.into_iter().take(max_visible_results) {
                             self.results.push(result);
@@ -803,6 +1002,19 @@ impl eframe::App for FlintApp {
                                                         .size(self.theme.font_size)
                                                 );
                                             }
+                                            ResultType::Alias(name, description) => {
+                                                let color = if is_selected { sel_text_rgb } else { text_rgb };
+                                                ui.label(
+                                                    egui::RichText::new(format!("⚡ {} - {}", name, description))
+                                                        .color(egui::Color32::from_rgba_premultiplied(
+                                                            (color[0] * 255.0 * item_alpha) as u8,
+                                                            (color[1] * 255.0 * item_alpha) as u8,
+                                                            (color[2] * 255.0 * item_alpha) as u8,
+                                                            (item_alpha * 255.0) as u8,
+                                                        ))
+                                                        .size(self.theme.font_size)
+                                                );
+                                            }
                                             ResultType::Currency(from, to, result) => {
                                                 let color = if is_selected { sel_text_rgb } else { text_rgb };
                                                 ui.label(
@@ -860,6 +1072,10 @@ impl eframe::App for FlintApp {
                                         }
                                         ResultType::Currency(_, _, result) => {
                                             copy_to_clipboard(&result.to_string());
+                                            self.should_close = true;
+                                        }
+                                        ResultType::Alias(name, _) => {
+                                            execute_alias(&name);
                                             self.should_close = true;
                                         }
                                     }
@@ -1096,6 +1312,28 @@ fn execute_command(cmd: &str) {
         .arg("-c")
         .arg(cmd)
         .spawn();
+}
+
+fn execute_alias(name: &str) {
+    let aliases = AliasEntry::get_all();
+    for alias in aliases {
+        if alias.name == name {
+            match alias.command.as_str() {
+                "CALC" => {}
+                "lock" => { let _ = Command::new("sh").arg("-c").arg("loginctl lock-session").spawn(); }
+                "shutdown now" => { let _ = Command::new("sh").arg("-c").arg("systemctl poweroff").spawn(); }
+                "reboot" => { let _ = Command::new("sh").arg("-c").arg("systemctl reboot").spawn(); }
+                "systemctl suspend" => { let _ = Command::new("sh").arg("-c").arg("systemctl suspend").spawn(); }
+                "WIFI" => { let _ = Command::new("sh").arg("-c").arg("rfkill toggle wifi").spawn(); }
+                "BLUETOOTH" => { let _ = Command::new("sh").arg("-c").arg("rfkill toggle bluetooth").spawn(); }
+                "EMOJI" => {}
+                "FILE" => {}
+                "KILL" => {}
+                _ => { let _ = Command::new("sh").arg("-c").arg(&alias.command).spawn(); }
+            }
+            return;
+        }
+    }
 }
 
 fn open_web_search(query: &str) {
@@ -1587,7 +1825,8 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
                             if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
                                 let icon_path = icon.and_then(|i| find_icon_path(&i));
                                 apps.push(AppEntry {
-                                    name: app_name,
+                                    name: app_name.clone(),
+                                    name_lower: app_name.to_lowercase(),
                                     desktop_id: file_stem.to_string(),
                                     exec_command,
                                     match_indices: Vec::new(),
@@ -1626,9 +1865,12 @@ fn scan_flatpak_apps() -> Vec<FlatpakAppEntry> {
                     let icon_path = find_icon_path(&flatpak_id);
                     
                     flatpak_apps.push(FlatpakAppEntry {
-                        name,
-                        flatpak_id,
-                        description,
+                        name: name.clone(),
+                        name_lower: name.to_lowercase(),
+                        flatpak_id: flatpak_id.clone(),
+                        flatpak_id_lower: flatpak_id.to_lowercase(),
+                        description: description.clone(),
+                        description_lower: description.to_lowercase(),
                         match_indices: Vec::new(),
                         icon_path,
                     });
