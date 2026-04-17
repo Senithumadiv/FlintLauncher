@@ -59,6 +59,7 @@ text_color=#d4d4d4
 selection_bg=#0078d4
 selection_text=#ffffff
 border_color=#3c3c3c
+highlight_color=#0078d4
 
 # Font settings
 font_size=16
@@ -66,6 +67,14 @@ font_family=System
 
 # Border radius
 border_radius=0
+
+# Icon settings
+enable_icons=true
+icon_theme=Papirus
+icon_size=24
+
+# Animation settings
+enable_animations=true
 EOF
     echo "Default theme created at ~/.config/flint/theme.conf"
 fi
@@ -75,7 +84,6 @@ echo "🎉 Flint Launcher installed successfully!"
 echo ""
 echo "You can now:"
 echo "  - Run from terminal: flint_launcher"
-echo "  - Bind to a keyboard shortcut (Super+R, Alt+Space, etc.)"
 echo "  - Customize theme: ~/.config/flint/theme.conf"
 echo ""
 echo "To update, simply run this installer again."

@@ -24,6 +24,7 @@ struct Theme {
     enable_icons: bool,
     icon_theme: String,
     icon_size: f32,
+    enable_animations: bool,
 }
 
 impl Default for Theme {
@@ -41,6 +42,7 @@ impl Default for Theme {
             enable_icons: true,
             icon_theme: "Papirus".to_string(),
             icon_size: 24.0,
+            enable_animations: true,
         }
     }
 }
@@ -89,6 +91,7 @@ impl Theme {
                                 theme.icon_size = size;
                             }
                         }
+                        "enable_animations" => theme.enable_animations = value == "true" || value == "1",
                         _ => {}
                     }
                 }
@@ -370,6 +373,8 @@ struct FlintApp {
     flatpak_items: Vec<FlatpakAppEntry>,
     selected: usize,
     should_close: bool,
+    is_closing: bool,
+    closing_animation: AnimationState,
     has_focused: bool,
     theme: Theme,
     _lock_file: File,
@@ -393,6 +398,8 @@ impl FlintApp {
             flatpak_items,
             selected: 0,
             should_close: false,
+            is_closing: false,
+            closing_animation: AnimationState::new(Duration::from_millis(150), AnimationType::ScaleIn),
             has_focused: false,
             theme: Theme::load_from_config(),
             _lock_file: lock_file,
@@ -403,12 +410,17 @@ impl FlintApp {
     }
     
     fn update_result_animations(&mut self) {
+        if !self.theme.enable_animations {
+            self.result_animations.clear();
+            return;
+        }
+        
         if self.result_animations.len() != self.results.len() {
             self.result_animations = self.results.iter()
                 .enumerate()
                 .map(|(i, _)| {
-                    let delay = Duration::from_millis((i * 40) as u64).min(Duration::from_millis(200));
-                    let mut anim = AnimationState::new(Duration::from_millis(250), AnimationType::SlideDown);
+                    let delay = Duration::from_millis((i * 30) as u64).min(Duration::from_millis(120));
+                    let mut anim = AnimationState::new(Duration::from_millis(200), AnimationType::SlideDown);
                     anim.start_time += delay;
                     anim
                 })
@@ -421,11 +433,15 @@ impl FlintApp {
     }
     
     fn get_result_offset(&self, index: usize) -> f32 {
+        if !self.theme.enable_animations {
+            return 0.0;
+        }
+        
         self.result_animations.get(index)
             .map(|anim| {
                 match anim.animation_type {
-                    AnimationType::SlideDown => (1.0 - anim.ease_out()) * -30.0,
-                    AnimationType::BounceDown => (1.0 - anim.ease_out_bounce()) * -40.0,
+                    AnimationType::SlideDown => (1.0 - anim.ease_out()) * -25.0,
+                    AnimationType::BounceDown => (1.0 - anim.ease_out_bounce()) * -30.0,
                     _ => 0.0,
                 }
             })
@@ -433,6 +449,10 @@ impl FlintApp {
     }
     
     fn get_result_alpha(&self, index: usize) -> f32 {
+        if !self.theme.enable_animations {
+            return 1.0;
+        }
+        
         self.result_animations.get(index)
             .map(|anim| {
                 match anim.animation_type {
@@ -455,13 +475,6 @@ impl eframe::App for FlintApp {
             ctx.request_repaint();
         }
         
-        if self.should_close {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
-
-        let window_alpha = self.window_animation.ease_out();
-        
         let window_width = 600.0;
         let search_box_height = 50.0;
         let result_item_height = 44.0;
@@ -474,10 +487,40 @@ impl eframe::App for FlintApp {
         };
         let total_height = search_box_height + results_height;
         
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-            window_width,
-            total_height
-        )));
+        if self.should_close && !self.is_closing {
+            self.is_closing = true;
+            self.closing_animation.start_time = Instant::now();
+        }
+        
+        if self.is_closing {
+            if !self.theme.enable_animations {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            
+            self.closing_animation.update();
+            let shrink_progress = self.closing_animation.ease_out();
+            let scale = 1.0 - shrink_progress;
+            
+            if shrink_progress >= 1.0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                window_width * scale,
+                total_height * scale
+            )));
+        }
+
+        let window_alpha = self.window_animation.ease_out();
+        
+        if !self.is_closing {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                window_width,
+                total_height
+            )));
+        }
 
         let bg_rgb = self.theme.hex_to_rgb(&self.theme.background);
         let border_rgb = self.theme.hex_to_rgb(&self.theme.border_color);
@@ -1986,8 +2029,11 @@ border_radius=0
 enable_icons=true
 icon_theme=Papirus
 icon_size=24
+
+# Animation settings (true/false)
+enable_animations=true
 "#;
-    
+     
     if let Some(parent) = theme_path.parent() {
         let _ = fs::create_dir_all(parent);
     }

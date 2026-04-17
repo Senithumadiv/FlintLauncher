@@ -151,12 +151,18 @@ font_size=16
 font_family=JetBrainsMonoNerdFont-Regular
 ```
 
-### Icons
-You can customize app icons in `theme.conf`:
+### Icons & Animations
+You can customize app icons and animations in `theme.conf`:
 
 ```conf
+# Icon settings
 enable_icons=true
 icon_theme=Papirus
+icon_size=24
+
+# Animation settings
+enable_animations=true
+```
 icon_size=24
 ```
 
