@@ -64,8 +64,9 @@ Type these shortcuts for quick system actions:
 ## 🚀 Installation
 
 ### Prerequisites
-- Rust and Cargo (for building from source)
-- GTK (for app launching)
+- **Rust and Cargo** (for building from source)
+- **GTK** (for app launching)
+- **Internet** (for currency conversion feature)
 
 ### Quick Install
 
@@ -87,6 +88,13 @@ cargo build --release
 sudo cp target/release/flint_launcher /usr/local/bin/
 sudo chmod +x /usr/local/bin/flint_launcher
 mkdir -p ~/.config/flint
+```
+
+### Build Dependencies
+If build fails, install Rust:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 ```
 
 ## 🎯 Usage
